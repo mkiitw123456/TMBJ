@@ -85,7 +85,10 @@ const ItemCard = ({
         <div className="absolute top-4 right-4 z-10">
           {confirmDeleteId === item.id ? (
             <div className="flex gap-2 bg-red-50 p-1 rounded border border-red-200">
-              <button onClick={() => handleDelete(item.id)} className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">刪除</button>
+              <button 
+                onClick={() => handleDelete(item.id, isHistory, item.itemName)} 
+                className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+              >刪除</button>
               <button onClick={() => setConfirmDeleteId(null)} className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300">取消</button>
             </div>
           ) : (
