@@ -2,30 +2,48 @@
 import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Users, Calculator, Clock, Menu, X, 
-  LogOut, PenTool, Key 
+  LogOut, PenTool, Key, Settings // ✅ 新增 Settings 圖示
 } from 'lucide-react';
+
+// Views
 import AccountingView from './views/AccountingView';
 import BossTimerView from './views/BossTimerView';
 import CharacterListView from './views/CharacterListView'; 
+
+// Components
 import UserIdentityModal from './components/UserIdentityModal';
 import ThemeEditor from './components/ThemeEditor';
-import PasswordManagerModal from './components/PasswordManagerModal'; 
-import { MEMBERS } from './utils/constants'; 
-import { collection, getDocs } from "firebase/firestore";
+import PasswordManagerModal from './components/PasswordManagerModal';
+import UpdateNotification from './components/UpdateNotification'; // ✅ 新增：更新通知元件
+import SystemSettingsModal from './components/SystemSettingsModal'; // ✅ 新增：系統設定元件
+
+// Utils & Config
+import { MEMBERS, APP_VERSION } from './utils/constants'; 
+import { collection, getDocs, doc, onSnapshot } from "firebase/firestore"; // ✅ 新增 doc, onSnapshot
 import { db } from './config/firebase';
-import { sendNotify } from './utils/helpers'; // 引入 sendNotify
+import { sendNotify } from './utils/helpers'; 
 
 const App = () => {
+  // === 頁面狀態 ===
   const [activeTab, setActiveTab] = useState('boss');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  // === Modal 開關狀態 ===
   const [isDevModeOpen, setIsDevModeOpen] = useState(false);
   const [isPasswordManagerOpen, setIsPasswordManagerOpen] = useState(false);
+  const [isSystemSettingsOpen, setIsSystemSettingsOpen] = useState(false); // ✅ 新增：系統設定 Modal 開關
 
+  // === 使用者與成員資料 ===
   const [currentUser, setCurrentUser] = useState(localStorage.getItem('currentUser') || '訪客');
   const [isIdentityModalOpen, setIsIdentityModalOpen] = useState(!localStorage.getItem('currentUser'));
   const [members, setMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(true);
 
+  // === 版本控制狀態 ===
+  const [remoteVersion, setRemoteVersion] = useState(APP_VERSION); // ✅ 新增：雲端版號
+  const [showUpdateNotice, setShowUpdateNotice] = useState(false); // ✅ 新增：是否顯示更新通知
+
+  // 1. 抓取成員名單
   useEffect(() => {
     const fetchMembers = async () => {
       if (!db) {
@@ -53,21 +71,50 @@ const App = () => {
     fetchMembers();
   }, [isIdentityModalOpen]); 
 
+  // 2. ✅ 新增：版本號監聽 (Version Listener)
+  useEffect(() => {
+    if (!db) return;
+    
+    // 監聽 system_data 集合裡的 global_settings 文件
+    const unsub = onSnapshot(doc(db, "system_data", "global_settings"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const serverVersion = data.appVersion;
+        
+        if (serverVersion) {
+          setRemoteVersion(serverVersion);
+          // 如果 雲端版本 與 本地版本 不同，就顯示通知
+          if (serverVersion !== APP_VERSION) {
+            setShowUpdateNotice(true);
+          }
+        }
+      }
+    });
+
+    return () => unsub();
+  }, []);
+
+  // 3. ✅ 新增：刷新頁面函式
+  const handleRefreshApp = () => {
+    window.location.reload(true);
+  };
+
+  // 4. 登入處理
   const handleLogin = (name) => {
     setCurrentUser(name);
     localStorage.setItem('currentUser', name);
     setIsIdentityModalOpen(false);
-    
-    // 加入登入通知
     sendNotify(`👋 **[系統登入]** ${name} 已登入系統`);
   };
 
+  // 5. 登出處理
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
     setCurrentUser('訪客');
     setIsIdentityModalOpen(true);
   };
 
+  // 6. 初始化 CSS 變數 (防閃爍)
   useEffect(() => {
     const root = document.documentElement;
     if (!localStorage.getItem('custom_theme_settings')) {
@@ -99,6 +146,7 @@ const App = () => {
       className="min-h-screen transition-colors duration-300 font-sans flex flex-col"
       style={{ background: 'var(--app-bg)', color: 'var(--app-text)' }}
     >
+      {/* === Navbar === */}
       <nav className="sticky top-0 z-50 backdrop-blur-md border-b border-white/10 bg-black/20">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between h-16">
@@ -109,6 +157,10 @@ const App = () => {
               <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400 hidden sm:block">
                  天魔鏢局 團隊系統
               </h1>
+              {/* 顯示當前版本號 (Optional) */}
+              <span className="text-[10px] bg-white/10 px-1.5 rounded text-gray-400 font-mono hidden sm:block">
+                v{APP_VERSION}
+              </span>
             </div>
 
             <div className="hidden md:flex items-center gap-2">
@@ -128,16 +180,33 @@ const App = () => {
 
               <div className="flex gap-1">
                   {currentUser === 'Wolf' && (
-                    <button 
-                        onClick={() => setIsPasswordManagerOpen(true)} 
-                        className="p-2 rounded-lg text-gray-400 hover:text-green-400 hover:bg-white/10 transition-colors" 
-                        title="管理成員密碼"
-                    >
-                        <Key size={20}/>
-                    </button>
+                    <>
+                      {/* 管理員專用：密碼管理 */}
+                      <button 
+                          onClick={() => setIsPasswordManagerOpen(true)} 
+                          className="p-2 rounded-lg text-gray-400 hover:text-green-400 hover:bg-white/10 transition-colors" 
+                          title="管理成員密碼"
+                      >
+                          <Key size={20}/>
+                      </button>
+                      
+                      {/* ✅ 新增：管理員專用：系統版本設定 */}
+                      <button 
+                          onClick={() => setIsSystemSettingsOpen(true)} 
+                          className="p-2 rounded-lg text-gray-400 hover:text-blue-400 hover:bg-white/10 transition-colors" 
+                          title="系統版本設定"
+                      >
+                          <Settings size={20}/>
+                      </button>
+                    </>
                   )}
 
-                  <button onClick={() => setIsDevModeOpen(true)} className="p-2 rounded-lg text-gray-400 hover:text-yellow-400 hover:bg-white/10 transition-colors" title="開啟工程模式 (調色盤)">
+                  {/* 一般成員：工程模式 (調色盤) */}
+                  <button 
+                    onClick={() => setIsDevModeOpen(true)} 
+                    className="p-2 rounded-lg text-gray-400 hover:text-yellow-400 hover:bg-white/10 transition-colors" 
+                    title="開啟工程模式 (調色盤)"
+                  >
                     <PenTool size={20}/>
                   </button>
               </div>
@@ -158,6 +227,7 @@ const App = () => {
         )}
       </nav>
 
+      {/* === Main Content === */}
       <main className="flex-1 overflow-hidden relative">
         <div className="h-full w-full overflow-auto custom-scrollbar">
             {activeTab === 'accounting' && <AccountingView isDarkMode={true} currentUser={currentUser} members={members} />}
@@ -166,6 +236,9 @@ const App = () => {
         </div>
       </main>
 
+      {/* === Modals & Notifications === */}
+      
+      {/* 1. 身分登入 Modal */}
       <UserIdentityModal 
         isOpen={isIdentityModalOpen} 
         onClose={() => { if(currentUser !== '訪客') setIsIdentityModalOpen(false); }} 
@@ -173,15 +246,32 @@ const App = () => {
         members={members}
       />
 
+      {/* 2. 調色盤 Theme Editor */}
       <ThemeEditor 
         isOpen={isDevModeOpen} 
         onClose={() => setIsDevModeOpen(false)} 
       />
 
+      {/* 3. 密碼管理器 (Wolf Only) */}
       <PasswordManagerModal 
         isOpen={isPasswordManagerOpen}
         onClose={() => setIsPasswordManagerOpen(false)}
         currentUser={currentUser}
+      />
+
+      {/* 4. ✅ 新增：系統設定 (Wolf Only, 用來改雲端版號) */}
+      <SystemSettingsModal 
+        isOpen={isSystemSettingsOpen} 
+        onClose={() => setIsSystemSettingsOpen(false)} 
+        theme={{ card: 'bg-gray-800 border-gray-700', text: 'text-white', input: 'bg-gray-700 text-white border-gray-600' }} 
+        currentSettings={{ appVersion: remoteVersion }} // 傳入目前的雲端版本
+      />
+
+      {/* 5. ✅ 新增：版本更新通知 (所有人) */}
+      <UpdateNotification 
+        show={showUpdateNotice} 
+        remoteVersion={remoteVersion} 
+        onRefresh={handleRefreshApp} 
       />
 
     </div>
