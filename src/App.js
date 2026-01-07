@@ -54,7 +54,19 @@ const App = () => {
       try {
         const querySnapshot = await getDocs(collection(db, "members"));
         const memberList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
+        memberList.sort((a, b) => {
+          // 1. 優先比較 'order' 欄位 (數字小在前面)
+          // 如果沒有設定 order，預設給 999 (排後面)
+          const orderA = typeof a.order === 'number' ? a.order : 999;
+          const orderB = typeof b.order === 'number' ? b.order : 999;
+          
+          if (orderA !== orderB) {
+            return orderA - orderB;
+          }
+
+          // 2. 如果 order 一樣，則依照名字排序 (支援中文筆畫)
+          return a.name.localeCompare(b.name, "zh-Hant");
+        });
         if (memberList.length === 0) {
            const defaultMembers = MEMBERS.map(name => ({ name, password: '' }));
            setMembers(defaultMembers);

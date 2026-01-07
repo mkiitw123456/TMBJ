@@ -251,7 +251,7 @@ ${afterText}
                             );
                         })}
                         <tr className={tableStyles.incomeLabel}>
-                            <td className={`p-2 border text-right sticky left-0 z-10 font-bold ${tableStyles.headerCell}`}>預定收入</td>
+                            <td className={`p-2 border text-center sticky left-0 z-10 font-bold ${tableStyles.headerCell}`}>預定收入</td>
                             {memberNames.map(receiver => {
                                 let colTotal = 0;
                                 memberNames.forEach(payer => {
