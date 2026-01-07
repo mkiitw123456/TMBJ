@@ -107,7 +107,7 @@ const App = () => {
                 <LayoutDashboard size={24} className="text-white" />
               </div>
               <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400 hidden sm:block">
-                TMBJ 團隊系統
+                 天魔鏢局 團隊系統
               </h1>
             </div>
 

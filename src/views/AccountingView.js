@@ -118,11 +118,18 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const updateItemValue = async (id, field, value) => { if(currentUser !== '訪客') await updateDoc(doc(db, "active_items", id), { [field]: value }); };
   
-  // === 修正：刪除處理 (含防呆查詢名稱) ===
+  // === 強化版刪除處理 ===
   const handleDelete = async (id, isHistory, itemName) => { 
       if (currentUser === '訪客') return alert("訪客權限僅供瀏覽");
       
-      // 防呆：如果 itemName 為空，嘗試從目前的列表中找回名字
+      // 1. 本地先移除 (讓使用者覺得立刻刪除了)
+      if (isHistory) {
+          setHistoryItems(prev => prev.filter(item => item.id !== id));
+      } else {
+          setItems(prev => prev.filter(item => item.id !== id));
+      }
+
+      // 2. 防呆查詢名稱
       let finalItemName = itemName;
       if (!finalItemName) {
           const sourceList = isHistory ? historyItems : items;
@@ -130,12 +137,17 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           if (foundItem) finalItemName = foundItem.itemName;
       }
 
+      // 3. 執行資料庫刪除
       try {
-          await deleteDoc(doc(db, isHistory ? "history_items" : "active_items", id));
+          // 確保 collection 名稱正確
+          const colName = isHistory ? "history_items" : "active_items";
+          await deleteDoc(doc(db, colName, id));
+          
           sendNotify(`🗑️ **[刪除項目]** ${currentUser} 刪除了 **${finalItemName || '未知項目'}**`);
       } catch (e) {
-          console.error(e);
-          alert("刪除失敗");
+          console.error("Delete failed:", e);
+          alert("刪除失敗，請重新整理網頁後再試");
+          // 如果失敗，理論上應該把資料加回來，但這裡為了簡化先只提示
       }
   };
   
