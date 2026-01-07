@@ -29,6 +29,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
+  // ✅ 修正 1：補齊刪除與結算的確認狀態，解決 ItemCard 報錯
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmSettleId, setConfirmSettleId] = useState(null);
 
@@ -52,6 +53,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     const qItems = query(collection(db, "active_items"));
     const unsubItems = onSnapshot(qItems, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // 修正排序：最新刊登的排在上面
       list.sort((a, b) => {
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
@@ -118,18 +120,11 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const updateItemValue = async (id, field, value) => { if(currentUser !== '訪客') await updateDoc(doc(db, "active_items", id), { [field]: value }); };
   
-  // === 強化版刪除處理 ===
+  // ✅ 修正 2：改良版刪除函式 (解決未知項目 & 歷史無法刪除問題)
   const handleDelete = async (id, isHistory, itemName) => { 
       if (currentUser === '訪客') return alert("訪客權限僅供瀏覽");
       
-      // 1. 本地先移除 (讓使用者覺得立刻刪除了)
-      if (isHistory) {
-          setHistoryItems(prev => prev.filter(item => item.id !== id));
-      } else {
-          setItems(prev => prev.filter(item => item.id !== id));
-      }
-
-      // 2. 防呆查詢名稱
+      // 1. 先把名字抓出來 (防呆)
       let finalItemName = itemName;
       if (!finalItemName) {
           const sourceList = isHistory ? historyItems : items;
@@ -137,17 +132,21 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           if (foundItem) finalItemName = foundItem.itemName;
       }
 
-      // 3. 執行資料庫刪除
+      // 2. 樂觀更新 (先從畫面移除，讓使用者感覺立刻刪掉了)
+      if (isHistory) {
+          setHistoryItems(prev => prev.filter(item => item.id !== id));
+      } else {
+          setItems(prev => prev.filter(item => item.id !== id));
+      }
+
+      // 3. 執行資料庫刪除 & 發送通知
       try {
-          // 確保 collection 名稱正確
           const colName = isHistory ? "history_items" : "active_items";
           await deleteDoc(doc(db, colName, id));
-          
           sendNotify(`🗑️ **[刪除項目]** ${currentUser} 刪除了 **${finalItemName || '未知項目'}**`);
       } catch (e) {
           console.error("Delete failed:", e);
-          alert("刪除失敗，請重新整理網頁後再試");
-          // 如果失敗，理論上應該把資料加回來，但這裡為了簡化先只提示
+          alert("刪除失敗，請重新整理網頁");
       }
   };
   
@@ -259,6 +258,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 handleDelete={handleDelete} 
                 currentUser={currentUser} 
                 members={memberNames} 
+                // ✅ 關鍵：把兩個確認狀態都傳進去
                 confirmDeleteId={confirmDeleteId}
                 setConfirmDeleteId={setConfirmDeleteId}
                 confirmSettleId={confirmSettleId}
