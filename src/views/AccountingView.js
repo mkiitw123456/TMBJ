@@ -34,11 +34,15 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [confirmSettleId, setConfirmSettleId] = useState(null);
 
   // 過濾掉被標記為 "hideFromAccounting" 的成員
-  const memberNames = useMemo(() => {
-    return members
-      .filter(m => m.hideFromAccounting !== true) // 核心邏輯：如果隱藏設為 true 就踢掉
-      .map(m => m.name || m);
+// ✅ 修正：先產生一個「過濾後的成員物件列表」
+  const filteredMembers = useMemo(() => {
+    return members.filter(m => m.hideFromAccounting !== true);
   }, [members]);
+
+  // 再從上面那個過濾後的列表，取出名字給下拉選單用
+  const memberNames = useMemo(() => {
+    return filteredMembers.map(m => m.name || m);
+  }, [filteredMembers]);
 
   const initialForm = { itemName: '', price: '', cost: 0, exchangeType: 'WORLD', participants: [] };
   const [formData, setFormData] = useState({ ...initialForm, seller: currentUser || (memberNames[0] || '') });
@@ -289,7 +293,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      <BalanceGrid isOpen={isBalanceGridOpen} onClose={() => setIsBalanceGridOpen(false)} theme={theme} isDarkMode={isDarkMode} currentUser={currentUser} members={members} activeItems={items} />
+      <BalanceGrid isOpen={isBalanceGridOpen} onClose={() => setIsBalanceGridOpen(false)} theme={theme} isDarkMode={isDarkMode} currentUser={currentUser} members={filteredMembers} activeItems={items} />
       <CostCalculatorModal isOpen={isCostCalcOpen} onClose={() => setIsCostCalcOpen(false)} theme={theme} isDarkMode={isDarkMode} />
     </div>
   );
