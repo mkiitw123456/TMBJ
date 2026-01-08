@@ -33,7 +33,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmSettleId, setConfirmSettleId] = useState(null);
 
-  const memberNames = useMemo(() => members.map(m => m.name || m), [members]);
+  // 過濾掉被標記為 "hideFromAccounting" 的成員
+  const memberNames = useMemo(() => {
+    return members
+      .filter(m => m.hideFromAccounting !== true) // 核心邏輯：如果隱藏設為 true 就踢掉
+      .map(m => m.name || m);
+  }, [members]);
 
   const initialForm = { itemName: '', price: '', cost: 0, exchangeType: 'WORLD', participants: [] };
   const [formData, setFormData] = useState({ ...initialForm, seller: currentUser || (memberNames[0] || '') });
