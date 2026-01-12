@@ -193,7 +193,7 @@ ${afterText}
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-hidden">
-      <div className={`w-full max-w-6xl rounded-xl p-6 max-h-[90vh] h-auto flex flex-col ${theme.card}`}>
+      <div className={`w-full max-w-[98vw] rounded-xl p-6 max-h-[90vh] h-auto flex flex-col ${theme.card}`}>
         <div className={`flex justify-between items-center mb-4 border-b pb-2 flex-none ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
           <div className="flex items-center gap-4">
             <h3 className={`text-xl font-bold flex items-center gap-2 ${theme.text}`}><Grid size={24}/> 成員餘額表</h3>

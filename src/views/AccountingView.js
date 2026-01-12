@@ -72,7 +72,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     });
     
     const qHistory = query(collection(db, "history_items"), orderBy("settledAt", "desc"));
-    const unsubHistory = onSnapshot(qHistory, (snap) => setHistoryItems(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubHistory = onSnapshot(qHistory, (snap) => setHistoryItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
     return () => { unsubItems(); unsubHistory(); };
   }, []);
 

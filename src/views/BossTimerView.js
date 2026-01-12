@@ -328,7 +328,22 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             <h3 className="text-lg font-bold mb-4">{editingEventId ? '修改計時時間' : '新增計時'}</h3>
             <div className="space-y-4">
               <div><label className="text-xs opacity-70">選擇 Boss</label><select className={`w-full p-2 rounded border ${theme.input}`} value={recordForm.templateId} onChange={e=>setRecordForm({...recordForm, templateId: e.target.value})} disabled={!!editingEventId}><option value="" disabled>請選擇...</option>{bossTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-              <div className="flex gap-2 text-xs"><button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button><button onClick={()=>setRecordForm({...recordForm, timeMode: 'specific'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='specific' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>指定時間</button></div>
+              <div className="flex gap-2 text-xs"><button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button><button 
+        onClick={() => {
+            // 這裡加入抓取當前時間的邏輯
+            const nowStr = getCurrentDateStr();
+            const timeStr = getCurrentTimeStr().slice(0, 5); // 取 HH:mm
+            setRecordForm({
+                ...recordForm, 
+                timeMode: 'specific',
+                specificDate: nowStr,
+                specificTime: timeStr
+            });
+        }} 
+        className={`flex-1 py-2 rounded border ${recordForm.timeMode==='specific' ? 'bg-blue-600 text-white' : 'opacity-50'}`}
+    >
+        指定時間
+    </button></div>
               {recordForm.timeMode === 'specific' && (<div className="grid grid-cols-2 gap-2"><input type="date" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificDate} onChange={e=>setRecordForm({...recordForm, specificDate: e.target.value})}/><input type="time" step="1" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificTime} onChange={e=>setRecordForm({...recordForm, specificTime: e.target.value})}/></div>)}
               <div className="flex justify-end gap-2 mt-4"><button onClick={() => setIsAddRecordModalOpen(false)} className="px-4 py-2 bg-gray-500 text-white rounded">取消</button><button onClick={handleSaveRecord} className="px-4 py-2 bg-blue-600 text-white rounded">儲存</button></div>
             </div>
