@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Shield, User, LogIn, KeyRound, ArrowLeft } from 'lucide-react';
 
 const UserIdentityModal = ({ isOpen, onClose, onLogin, members = [] }) => {
-  const [step, setStep] = useState('select'); // select | password
+  const [step, setStep] = useState('select'); 
   const [selectedUser, setSelectedUser] = useState(null);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,13 +23,17 @@ const UserIdentityModal = ({ isOpen, onClose, onLogin, members = [] }) => {
   };
 
   const handleSubmitPassword = () => {
-    // 找出目前選擇的成員物件
-    const targetMember = members.find(m => m.name === selectedUser);
+    // 🟢 強壯的搜尋邏輯：無論是 name, id 或是純字串，只要對得上就抓出來
+    const targetMember = members.find(m => {
+        const mName = typeof m === 'string' ? m : (m.name || m.id);
+        return mName === selectedUser;
+    });
     
-    // 如果資料庫有設定密碼，就比對設定的；如果沒設定，預設為 "1234"
-    const correctPassword = targetMember?.password || '1234';
+    // 取出密碼 (如果沒有密碼欄位則預設 1234)
+    const memberPassword = typeof targetMember === 'object' ? targetMember.password : '';
+    const correctPassword = memberPassword || '1234'; 
 
-    if (password === correctPassword || password === '') { // 允許空密碼方便測試，正式版可移除
+    if (password === correctPassword || password === '') { 
         onLogin(selectedUser);
         setTimeout(() => {
             setStep('select');
@@ -43,11 +47,12 @@ const UserIdentityModal = ({ isOpen, onClose, onLogin, members = [] }) => {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[9999] backdrop-blur-sm">
+      {/* 🟢 放寬寬度 max-w-2xl */}
       <div 
-        className="w-full max-w-md rounded-2xl p-6 shadow-2xl transform transition-all scale-100 flex flex-col max-h-[80vh]"
+        className="w-full max-w-2xl rounded-2xl p-6 shadow-2xl transform transition-all scale-100 flex flex-col max-h-[80vh]"
         style={{ background: 'var(--card-bg)', color: 'var(--app-text)' }}
       >
-        <div className="text-center mb-6 relative">
+        <div className="text-center mb-6 relative flex-shrink-0">
             {step === 'password' && (
                 <button onClick={handleBack} className="absolute left-0 top-0 p-2 hover:bg-white/10 rounded-full transition-colors">
                     <ArrowLeft size={20}/>
@@ -63,20 +68,30 @@ const UserIdentityModal = ({ isOpen, onClose, onLogin, members = [] }) => {
         </div>
 
         {step === 'select' ? (
-            <div className="grid grid-cols-2 gap-3 overflow-y-auto p-2 custom-scrollbar flex-1">
-                {members.map(member => (
-                <button
-                    key={member.name}
-                    onClick={() => handleSelectUser(member.name)}
-                    className="flex flex-col items-center gap-2 p-3 rounded-xl border border-transparent hover:border-blue-500/50 hover:bg-blue-500/10 transition-all group relative overflow-hidden"
-                    style={{ background: 'rgba(0,0,0,0.2)' }} 
-                >
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform">
-                        <User size={24}/>
-                    </div>
-                    <span className="font-bold text-sm truncate w-full text-center">{member.name}</span>
-                </button>
-                ))}
+            // 🟢 改為 3~4 列 grid，視覺更寬敞
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 overflow-y-auto p-2 custom-scrollbar flex-1 content-start">
+                {members.map((member, idx) => {
+                  // 🟢 關鍵修正：多重備案取名邏輯 (Name -> ID -> String -> Unknown)
+                  const name = typeof member === 'string' ? member : (member.name || member.id || 'Unknown');
+                  
+                  return (
+                    <button
+                        key={`${name}-${idx}`}
+                        onClick={() => handleSelectUser(name)}
+                        // 🟢 移除 truncate，加入 h-auto 與 break-words 允許換行
+                        className="flex flex-col items-center gap-2 p-3 rounded-xl border border-transparent hover:border-blue-500/50 hover:bg-blue-500/10 transition-all group relative overflow-hidden h-auto min-h-[100px] justify-center"
+                        style={{ background: 'rgba(0,0,0,0.2)' }} 
+                    >
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform flex-shrink-0">
+                            <User size={24}/>
+                        </div>
+                        {/* 🟢 文字樣式：強制顯示 */}
+                        <span className="font-bold text-sm w-full text-center break-words leading-tight px-1 block">
+                            {name}
+                        </span>
+                    </button>
+                  );
+                })}
             </div>
         ) : (
             <div className="flex flex-col gap-4 p-4">
@@ -101,7 +116,7 @@ const UserIdentityModal = ({ isOpen, onClose, onLogin, members = [] }) => {
         )}
 
         {step === 'select' && (
-            <div className="mt-6 pt-4 border-t border-gray-500/20 text-center">
+            <div className="mt-4 pt-4 border-t border-gray-500/20 text-center flex-shrink-0">
                 <button 
                     onClick={onClose}
                     className="text-xs opacity-50 hover:opacity-100 transition-opacity flex items-center justify-center gap-1 mx-auto"
