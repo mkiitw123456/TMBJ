@@ -80,7 +80,11 @@ const ItemCard = ({
             <h3 className="text-xl font-bold">{item.itemName || item.name || '無名稱'}</h3>
             <span className="px-2 py-0.5 text-xs rounded-full border bg-green-100 text-green-700 border-green-200">{EXCHANGE_TYPES[item.exchangeType]?.label || '一般'}</span>
           </div>
-          {isHistory && <div className="text-xs text-gray-400 flex gap-2"><span>建: {formatDate(item.createdAt)}</span><span>結: {formatDate(item.settledAt)}</span></div>}
+          {/* 🟢 修改這裡：無論是不是歷史紀錄，都顯示創建時間。如果是歷史紀錄，才額外顯示結算時間。 */}
+          <div className="text-xs text-gray-400 flex gap-2">
+             <span>建: {formatDate(item.createdAt)}</span>
+             {isHistory && <span>結: {formatDate(item.settledAt)}</span>}
+          </div>
         </div>
         <div className="absolute top-4 right-4 z-10">
           {confirmDeleteId === item.id ? (
