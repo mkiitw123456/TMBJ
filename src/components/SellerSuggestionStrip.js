@@ -6,12 +6,12 @@ import { db } from '../config/firebase';
 import { calculateFinance } from '../utils/helpers';
 import { MEMBERS } from '../utils/constants';
 
-const SellerSuggestionStrip = ({ isDarkMode }) => {
+const SellerSuggestionStrip = ({ isDarkMode, vertical = false }) => {
   const [gridData, setGridData] = useState({});
   const [activeItems, setActiveItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // 1. 獨立監聽：餘額表矩陣
+  // 1. 監聽餘額表
   useEffect(() => {
     if (!db) return;
     const unsub = onSnapshot(doc(db, "settlement_data", "main_grid"), (doc) => {
@@ -21,7 +21,7 @@ const SellerSuggestionStrip = ({ isDarkMode }) => {
     return () => unsub();
   }, []);
 
-  // 2. 獨立監聽：進行中項目 (用於預測未來帳務)
+  // 2. 監聽進行中項目
   useEffect(() => {
     if (!db) return;
     const q = query(collection(db, "active_items"));
@@ -31,11 +31,8 @@ const SellerSuggestionStrip = ({ isDarkMode }) => {
     return () => unsub();
   }, []);
 
-  // 3. 計算邏輯 (與 BalanceGrid 相同)
+  // 3. 計算邏輯
   const sellerSuggestions = useMemo(() => {
-    // 嘗試從資料庫抓成員，若無則使用預設常數，避免錯誤
-    let allMembers = MEMBERS; 
-    // 這裡簡化處理：如果 gridData 有 key，就收集所有出現過的名字
     const detectedMembers = new Set(MEMBERS);
     Object.keys(gridData).forEach(k => {
         const [p, r] = k.split('_');
@@ -47,7 +44,6 @@ const SellerSuggestionStrip = ({ isDarkMode }) => {
     const futureAdjustments = {};
     memberList.forEach(m => futureAdjustments[m] = { payable: 0, receivable: 0 });
 
-    // 預測未來帳務
     activeItems.forEach(item => {
         const seller = item.seller;
         const { perPersonSplit } = calculateFinance(item.price, item.exchangeType, item.participants?.length || 0, item.cost, item.listingHistory);
@@ -67,18 +63,15 @@ const SellerSuggestionStrip = ({ isDarkMode }) => {
     const suggestions = memberList.map(member => {
       let currentPayable = 0; 
       let currentReceivable = 0; 
-      
       memberList.forEach(other => {
         if (member !== other) {
           currentPayable += (gridData[`${member}_${other}`] || 0);
           currentReceivable += (gridData[`${other}_${member}`] || 0);
         }
       });
-
       const totalPayable = currentPayable + (futureAdjustments[member]?.payable || 0);
       const totalReceivable = currentReceivable + (futureAdjustments[member]?.receivable || 0);
       const score = totalReceivable - totalPayable;
-      
       return { name: member, score };
     });
 
@@ -87,24 +80,54 @@ const SellerSuggestionStrip = ({ isDarkMode }) => {
 
   if (loading) return null;
 
+  // 🟢 樣式判斷：垂直模式 vs 橫條模式
+  const containerClass = vertical 
+    ? "h-full flex flex-col" // 垂直：撐滿高度
+    : `mt-4 p-3 rounded-xl border flex flex-col gap-2 ${isDarkMode ? 'bg-orange-900/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`; // 橫向：原本的樣式
+
+  const listClass = vertical
+    ? "flex flex-col gap-2 overflow-y-auto pr-1 custom-scrollbar flex-1" // 垂直：上下捲動
+    : "flex overflow-x-auto gap-3 pb-1 no-scrollbar"; // 橫向：左右捲動
+
+  const headerClass = vertical
+    ? "mb-2 pb-2 border-b border-white/10 text-center py-2" // 垂直：標題置中加底線
+    : "flex justify-between items-center";
+
   return (
-    <div className={`mt-4 p-3 rounded-xl border flex flex-col gap-2 ${isDarkMode ? 'bg-orange-900/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`}>
-        <div className="flex justify-between items-center">
-            <h4 className={`font-bold text-xs flex items-center gap-2 ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
-                <TrendingUp size={14}/> 建議掛賣順序 (即時連動)
+    <div className={containerClass}>
+        <div className={headerClass}>
+            <h4 className={`font-bold flex items-center justify-center gap-2 ${vertical ? 'text-base' : 'text-xs'} ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
+                <TrendingUp size={vertical ? 18 : 14}/> 建議掛賣順序
             </h4>
         </div>
-        <div className="flex overflow-x-auto gap-3 pb-1 no-scrollbar">
+        <div className={listClass}>
             {sellerSuggestions.map((item, index) => { 
                 const shouldSell = item.score > 0; 
                 return (
-                    <div key={item.name} className={`flex-none flex items-center gap-2 p-2 rounded-lg border shadow-sm min-w-[120px] relative ${isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-200'} ${index === 0 ? 'ring-1 ring-orange-500' : ''}`}>
-                        <div className={`absolute top-0 left-0 px-1.5 text-[9px] font-bold text-white rounded-br ${index === 0 ? 'bg-red-500' : 'bg-gray-500'}`}>#{index + 1}</div>
-                        <div className="flex flex-col ml-1 mt-1">
-                            <span className={`font-bold text-sm leading-none ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{item.name}</span>
-                            <span className={`text-[9px] ${shouldSell ? 'text-orange-500' : 'opacity-50'}`}>{shouldSell ? '建議賣' : '暫緩'}</span>
+                    <div key={item.name} className={`
+                        rounded-lg border shadow-sm relative transition-colors
+                        ${isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-200'} 
+                        ${index === 0 ? 'ring-1 ring-orange-500' : ''}
+                        ${vertical ? 'w-full flex items-center p-3 gap-3' : 'flex-none flex items-center gap-2 p-2 min-w-[120px]'}
+                    `}>
+                        <div className={`
+                            flex items-center justify-center font-bold text-white rounded
+                            ${vertical ? 'w-6 h-6 text-xs' : 'absolute top-0 left-0 px-1.5 text-[9px] rounded-br'}
+                            ${index === 0 ? 'bg-red-500' : 'bg-gray-500'}
+                        `}>
+                            #{index + 1}
                         </div>
-                        <span className={`font-mono font-bold text-xs ml-auto ${shouldSell ? 'text-orange-500' : 'text-gray-500'}`}>
+                        
+                        <div className={`flex flex-col ${vertical ? 'flex-1' : 'ml-1 mt-1'}`}>
+                            <span className={`font-bold leading-none ${vertical ? 'text-base mb-1' : 'text-sm'} ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                                {item.name}
+                            </span>
+                            <span className={`text-[9px] ${shouldSell ? 'text-orange-500' : 'opacity-50'}`}>
+                                {shouldSell ? '建議掛賣' : '暫緩掛賣'}
+                            </span>
+                        </div>
+                        
+                        <span className={`font-mono font-bold ml-auto ${vertical ? 'text-lg' : 'text-xs'} ${shouldSell ? 'text-orange-500' : 'text-gray-500'}`}>
                             {shouldSell ? '+' : ''}{Math.round(item.score/10000)}萬
                         </span>
                     </div>

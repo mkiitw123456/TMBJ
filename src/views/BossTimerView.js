@@ -22,7 +22,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   
   const [now, setNow] = useState(new Date()); 
   
-  // 🟢 新增：時間校正狀態
+  // 時間校正狀態
   const [timeOffset, setTimeOffset] = useState(0); 
   const [isTimeSynced, setIsTimeSynced] = useState(false);
 
@@ -58,11 +58,10 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
-  // 🟢 新增：網路時間校正邏輯
+  // 網路時間校正
   useEffect(() => {
     const syncTime = async () => {
         try {
-            // 抓取 Hosting Server 回傳的 Header 時間
             const response = await fetch(window.location.href, { method: 'HEAD', cache: 'no-store' });
             const serverDateStr = response.headers.get('Date');
             if (serverDateStr) {
@@ -80,7 +79,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     syncTime();
   }, []);
 
-  // 🟢 修改：計時器改為依賴 offset
+  // 計時器
   useEffect(() => {
     const timer = setInterval(() => {
         setNow(new Date(Date.now() + timeOffset));
@@ -90,7 +89,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
 
   const showToast = (message) => { setToastMsg(message); setTimeout(() => setToastMsg(null), 2000); };
 
-  // ... (核心邏輯) ...
+  // ... (操作邏輯保持不變) ...
   const handleQuickRefresh = async (event) => {
     if (!db) return;
     let intervalMinutes = 0;
@@ -101,7 +100,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     const currentState = { deathTime: event.deathTime, respawnTime: event.respawnTime };
     setUndoHistory(prev => ({ ...prev, [event.id]: [currentState, ...(prev[event.id] || [])].slice(0, 3) }));
     
-    // 使用校正後的現在時間作為基準
     const baseTime = new Date(Date.now() + timeOffset);
     const newRespawnTime = new Date(baseTime.getTime() + intervalMinutes * 60000);
     
@@ -122,7 +120,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
       if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); 
       if (!recordForm.templateId) return alert("請選擇 Boss"); 
       
-      let baseTime = new Date(Date.now() + timeOffset); // 預設為校正後的當前時間
+      let baseTime = new Date(Date.now() + timeOffset); 
       
       if (recordForm.timeMode === 'specific') { 
           if (!recordForm.specificDate || !recordForm.specificTime) return alert("請輸入日期與時間"); 
@@ -223,7 +221,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
 
   const markers = calculate2DayMarkers();
   
-  // 計算 NOW 線 (依賴 now 變數，已包含 offset)
+  // 計算 NOW 線
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const totalDuration = 48 * 60 * 60 * 1000;
@@ -233,6 +231,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
   const theme = { text: 'text-[var(--app-text)]', subText: 'opacity-60', input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' };
 
+  // 分組邏輯 (保留 yesterday 以防萬一，但顯示時不使用)
   const groupedEvents = {
     yesterday: bossEvents.filter(e => getRelativeDay(e.respawnTime) === 'yesterday'),
     today: bossEvents.filter(e => getRelativeDay(e.respawnTime) === 'today'),
@@ -276,9 +275,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
                 ))}
             </div>
          </div>
-         
-         {/* 🟢 插入掛賣建議條 */}
-         <SellerSuggestionStrip isDarkMode={isDarkMode} />
       </div>
 
       {/* 2. Control Bar */}
@@ -305,14 +301,13 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             <button onClick={() => { setEditingBossId(null); setNewBossForm({ name: '', respawnMinutes: 60, color: getRandomBrightColor(), stars: 0 }); setIsCreateBossModalOpen(true); }} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-blue-600 hover:bg-blue-500 text-sm"><Plus size={16}/> 建立 Boss</button>
             <button onClick={() => { 
                 setEditingEventId(null); 
-                // 🟢 預設帶入校正後的當前時間
                 const nowSynced = new Date(Date.now() + timeOffset);
                 const dStr = nowSynced.toISOString().split('T')[0];
                 const tStr = `${String(nowSynced.getHours()).padStart(2,'0')}:${String(nowSynced.getMinutes()).padStart(2,'0')}`;
                 
                 setRecordForm({ 
                     templateId: bossTemplates[0]?.id || '', 
-                    timeMode: 'specific', // 直接切換到指定時間模式方便修改
+                    timeMode: 'specific', 
                     specificDate: dStr, 
                     specificTime: tStr
                 }); 
@@ -321,14 +316,30 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* 3. Main Content (保持不變) */}
+      {/* 3. Main Content - 佈局大改動 */}
       <div className="flex flex-col lg:flex-row gap-4 h-full overflow-hidden">
+        
         <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 h-full overflow-y-auto pb-4 custom-scrollbar">
-            {['yesterday', 'today', 'tomorrow'].map(dayKey => (
+            
+            {/* 🟢 第一欄：掛賣建議 (垂直版) */}
+            <div className="rounded-xl p-0 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300 overflow-hidden" style={{ background: 'var(--card-bg)' }}>
+                <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} />
+            </div>
+
+            {/* 🟢 第二、三欄：今天與明天 */}
+            {['today', 'tomorrow'].map(dayKey => (
             <div key={dayKey} className="rounded-xl p-3 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--card-bg)' }}>
-                <h3 className="font-bold mb-2 capitalize text-center py-2 border-b border-white/10">{dayKey === 'yesterday' ? '昨天' : dayKey === 'today' ? '今天' : '明天'}</h3>
+                <h3 className="font-bold mb-2 capitalize text-center py-2 border-b border-white/10">
+                    {dayKey === 'today' ? '今天' : '明天'}
+                </h3>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                {[...groupedEvents[dayKey], ...(dayKey === 'tomorrow' ? others.filter(e => new Date(e.respawnTime) > now) : []), ...(dayKey === 'yesterday' ? others.filter(e => new Date(e.respawnTime) < now) : [])].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i).sort((a,b) => new Date(a.respawnTime) - new Date(b.respawnTime)).map(event => (
+                {[
+                    ...groupedEvents[dayKey], 
+                    ...(dayKey === 'tomorrow' ? others.filter(e => new Date(e.respawnTime) > now) : [])
+                ]
+                .filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i)
+                .sort((a,b) => new Date(a.respawnTime) - new Date(b.respawnTime))
+                .map(event => (
                     <EventItem key={event.id} event={event} theme={theme} now={now} handleDeleteEvent={handleDeleteEvent} handleOpenEditEvent={openEditEvent} handleQuickRefresh={handleQuickRefresh} handleUndo={handleUndo} hasUndo={undoHistory[event.id]?.length > 0} currentUser={currentUser}/>
                 ))}
                 {groupedEvents[dayKey].length === 0 && <div className="text-center opacity-30 py-10 text-sm">無紀錄</div>}
@@ -337,6 +348,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             ))}
         </div>
         
+        {/* 右側邊欄 */}
         <div className="w-full lg:w-80 flex flex-col gap-4 h-full overflow-hidden">
             <div className="flex-1 rounded-xl border flex flex-col overflow-hidden backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--sidebar-border)' }}>
                 <div className="p-3 border-b border-white/10 font-bold flex items-center gap-2"><List size={16}/> 重生順序列表</div>
@@ -378,7 +390,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
               <div><label className="text-xs opacity-70">選擇 Boss</label><select className={`w-full p-2 rounded border ${theme.input}`} value={recordForm.templateId} onChange={e=>setRecordForm({...recordForm, templateId: e.target.value})} disabled={!!editingEventId}><option value="" disabled>請選擇...</option>{bossTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
               <div className="flex gap-2 text-xs">
                   <button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button>
-                  {/* 🟢 修改：指定時間按鈕也自動帶入校正後時間 */}
                   <button onClick={()=>{
                       const nowSynced = new Date(Date.now() + timeOffset);
                       setRecordForm({
