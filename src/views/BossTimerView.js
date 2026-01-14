@@ -1,7 +1,7 @@
 // src/views/BossTimerView.js
 import React, { useState, useEffect } from 'react';
 import { 
-  Clock, Plus, Tag, RefreshCw, Star, X, Trash2, Edit3, List, Settings, Calendar, Loader2
+  Clock, Plus, Tag, RefreshCw, Star, X, Trash2, Edit3, List, Settings, Calendar, Loader2, Globe
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
@@ -10,6 +10,8 @@ import {
 } from '../utils/helpers';
 import ToastNotification from '../components/ToastNotification';
 import EventItem from '../components/EventItem';
+// 引入掛賣建議條元件
+import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 const BossTimerView = ({ isDarkMode, currentUser }) => {
   // === Data States ===
@@ -19,6 +21,11 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const [timelineRecords, setTimelineRecords] = useState([]);
   
   const [now, setNow] = useState(new Date()); 
+  
+  // 🟢 新增：時間校正狀態
+  const [timeOffset, setTimeOffset] = useState(0); 
+  const [isTimeSynced, setIsTimeSynced] = useState(false);
+
   const [toastMsg, setToastMsg] = useState(null); 
   const [undoHistory, setUndoHistory] = useState({});
 
@@ -51,14 +58,39 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
+  // 🟢 新增：網路時間校正邏輯
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000); 
-    return () => clearInterval(timer);
+    const syncTime = async () => {
+        try {
+            // 抓取 Hosting Server 回傳的 Header 時間
+            const response = await fetch(window.location.href, { method: 'HEAD', cache: 'no-store' });
+            const serverDateStr = response.headers.get('Date');
+            if (serverDateStr) {
+                const serverTime = new Date(serverDateStr).getTime();
+                const clientTime = Date.now();
+                const offset = serverTime - clientTime;
+                setTimeOffset(offset);
+                setIsTimeSynced(true);
+                console.log(`[Time Sync] 校正完成，誤差: ${offset}ms`);
+            }
+        } catch (e) {
+            console.warn("時間校正失敗，將使用本機時間", e);
+        }
+    };
+    syncTime();
   }, []);
+
+  // 🟢 修改：計時器改為依賴 offset
+  useEffect(() => {
+    const timer = setInterval(() => {
+        setNow(new Date(Date.now() + timeOffset));
+    }, 1000); 
+    return () => clearInterval(timer);
+  }, [timeOffset]);
 
   const showToast = (message) => { setToastMsg(message); setTimeout(() => setToastMsg(null), 2000); };
 
-  // ... (核心邏輯保持不變) ...
+  // ... (核心邏輯) ...
   const handleQuickRefresh = async (event) => {
     if (!db) return;
     let intervalMinutes = 0;
@@ -68,10 +100,14 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     else return alert("無法計算週期");
     const currentState = { deathTime: event.deathTime, respawnTime: event.respawnTime };
     setUndoHistory(prev => ({ ...prev, [event.id]: [currentState, ...(prev[event.id] || [])].slice(0, 3) }));
-    const baseTime = new Date();
+    
+    // 使用校正後的現在時間作為基準
+    const baseTime = new Date(Date.now() + timeOffset);
     const newRespawnTime = new Date(baseTime.getTime() + intervalMinutes * 60000);
+    
     try { await updateDoc(doc(db, "boss_events", event.id), { deathTime: baseTime.toISOString(), respawnTime: newRespawnTime.toISOString() }); sendLog(currentUser, "快速刷新", `${event.name}`); showToast(`🔄 已刷新：${event.name}`); } catch(e) { alert("刷新失敗"); }
   };
+
   const handleUndo = async (event) => {
     if (!db) return;
     const history = undoHistory[event.id];
@@ -79,25 +115,76 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     const previousState = history[0]; 
     try { await updateDoc(doc(db, "boss_events", event.id), { deathTime: previousState.deathTime, respawnTime: previousState.respawnTime }); setUndoHistory(prev => ({ ...prev, [event.id]: prev[event.id].slice(1) })); sendLog(currentUser, "回復時間", `${event.name}`); showToast(`zk 已回復：${event.name}`); } catch(e) { alert("回復失敗"); }
   };
+
   const handleCreateOrUpdateBoss = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!newBossForm.name) return alert("請輸入 Boss 名稱"); try { if (editingBossId) await updateDoc(doc(db, "boss_templates", editingBossId), newBossForm); else await addDoc(collection(db, "boss_templates"), newBossForm); setIsCreateBossModalOpen(false); sendLog(currentUser, editingBossId ? "修改Boss" : "新增Boss", newBossForm.name); } catch(e) { alert("儲存失敗"); } };
-  const handleSaveRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!recordForm.templateId) return alert("請選擇 Boss"); let baseTime = new Date(); if (recordForm.timeMode === 'specific') { if (!recordForm.specificDate || !recordForm.specificTime) return alert("請輸入日期與時間"); baseTime = new Date(`${recordForm.specificDate}T${recordForm.specificTime}`); } const template = bossTemplates.find(b => b.id === recordForm.templateId); let respawnTime, name, color, stars; if (template) { respawnTime = new Date(baseTime.getTime() + template.respawnMinutes * 60000); name = template.name; color = template.color; stars = template.stars || 0; } else if (editingEventId) { const originalEvent = bossEvents.find(e => e.id === editingEventId); if(!originalEvent) return alert("找不到原始資料"); const duration = new Date(originalEvent.respawnTime) - new Date(originalEvent.deathTime); respawnTime = new Date(baseTime.getTime() + duration); name = originalEvent.name; color = originalEvent.color; stars = originalEvent.stars || 0; } else return alert("資料錯誤"); const eventData = { templateId: recordForm.templateId, name, color, stars, deathTime: baseTime.toISOString(), respawnTime: respawnTime.toISOString() }; try { if (editingEventId) await updateDoc(doc(db, "boss_events", editingEventId), eventData); else { eventData.createdAt = new Date().toISOString(); await addDoc(collection(db, "boss_events"), eventData); } setIsAddRecordModalOpen(false); sendLog(currentUser, editingEventId ? "修改紀錄" : "新增紀錄", name); } catch(e) { alert("儲存失敗"); } };
+  
+  const handleSaveRecord = async () => { 
+      if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); 
+      if (!recordForm.templateId) return alert("請選擇 Boss"); 
+      
+      let baseTime = new Date(Date.now() + timeOffset); // 預設為校正後的當前時間
+      
+      if (recordForm.timeMode === 'specific') { 
+          if (!recordForm.specificDate || !recordForm.specificTime) return alert("請輸入日期與時間"); 
+          baseTime = new Date(`${recordForm.specificDate}T${recordForm.specificTime}`); 
+      } 
+      
+      const template = bossTemplates.find(b => b.id === recordForm.templateId); 
+      let respawnTime, name, color, stars; 
+      
+      if (template) { 
+          respawnTime = new Date(baseTime.getTime() + template.respawnMinutes * 60000); 
+          name = template.name; 
+          color = template.color; 
+          stars = template.stars || 0; 
+      } else if (editingEventId) { 
+          const originalEvent = bossEvents.find(e => e.id === editingEventId); 
+          if(!originalEvent) return alert("找不到原始資料"); 
+          const duration = new Date(originalEvent.respawnTime) - new Date(originalEvent.deathTime); 
+          respawnTime = new Date(baseTime.getTime() + duration); 
+          name = originalEvent.name; 
+          color = originalEvent.color; 
+          stars = originalEvent.stars || 0; 
+      } else return alert("資料錯誤"); 
+      
+      const eventData = { templateId: recordForm.templateId, name, color, stars, deathTime: baseTime.toISOString(), respawnTime: respawnTime.toISOString() }; 
+      try { 
+          if (editingEventId) await updateDoc(doc(db, "boss_events", editingEventId), eventData); 
+          else { 
+              eventData.createdAt = new Date().toISOString(); 
+              await addDoc(collection(db, "boss_events"), eventData); 
+          } 
+          setIsAddRecordModalOpen(false); 
+          sendLog(currentUser, editingEventId ? "修改紀錄" : "新增紀錄", name); 
+      } catch(e) { alert("儲存失敗"); } 
+  };
+
   const handleDeleteEvent = async (id) => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if(!window.confirm("確定刪除此紀錄？")) return; await deleteDoc(doc(db, "boss_events", id)); };
   const handleDeleteTemplate = async (id, name) => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if(!window.confirm(`確定刪除 ${name} 的設定嗎？`)) return; await deleteDoc(doc(db, "boss_templates", id)); };
-  const openEditEvent = (event) => { setEditingEventId(event.id); const d = new Date(event.deathTime); setRecordForm({ templateId: event.templateId, timeMode: 'specific', specificDate: d.toISOString().split('T')[0], specificTime: `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}` }); setIsAddRecordModalOpen(true); };
+  
+  const openEditEvent = (event) => { 
+      setEditingEventId(event.id); 
+      const d = new Date(event.deathTime); 
+      setRecordForm({ 
+          templateId: event.templateId, 
+          timeMode: 'specific', 
+          specificDate: d.toISOString().split('T')[0], 
+          specificTime: `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}` 
+      }); 
+      setIsAddRecordModalOpen(true); 
+  };
+  
   const openEditTemplate = (t) => { setEditingBossId(t.id); setNewBossForm({ name: t.name, respawnMinutes: t.respawnMinutes, color: t.color, stars: t.stars || 0 }); setIsCreateBossModalOpen(true); };
   const handleAddTimelineType = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineTypeForm.name || timelineTypeForm.interval <= 0) return alert("資料不完整"); setIsSubmitting(true); try { await addDoc(collection(db, "timeline_types"), timelineTypeForm); setTimelineTypeForm({ name: '', interval: 60, color: '#FF5733' }); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineType = async (id) => { if (currentUser === '訪客') return; if(window.confirm("確定刪除此設定？")) await deleteDoc(doc(db, "timeline_types", id)); };
   const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineRecord = async (id) => { if (currentUser === '訪客') return; if(window.confirm("刪除此紀錄？")) await deleteDoc(doc(db, "timeline_records", id)); };
 
-  // === 修改：只計算兩天 (Today, Tomorrow) 的 Markers (滿版顯示) ===
+  // === Markers Logic ===
   const calculate2DayMarkers = () => {
-    // 基準點：今天 00:00:00
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
-    
-    // 終點：明天 23:59:59 (即 startOfToday + 48小時)
-    const totalDuration = 48 * 60 * 60 * 1000; // 48 hrs in ms
+    const totalDuration = 48 * 60 * 60 * 1000;
     const endOfTomorrow = new Date(startOfToday.getTime() + totalDuration);
 
     let rawMarkers = [];
@@ -105,32 +192,18 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
       const type = timelineTypes.find(t => t.id === record.typeId);
       if (!type) return;
       const intervalMs = type.interval * 60 * 1000;
-      
       let checkTime = record.deathTimestamp;
-      
-      // 快轉到範圍內
       if (checkTime < startOfToday.getTime()) {
         const diff = startOfToday.getTime() - checkTime;
         const jumps = Math.floor(diff / intervalMs);
         checkTime += jumps * intervalMs;
       }
-
       while (checkTime <= endOfTomorrow.getTime() + intervalMs) { 
         if (checkTime >= startOfToday.getTime() && checkTime <= endOfTomorrow.getTime()) {
            const current = new Date(checkTime);
-           // 計算相對於 48 小時的百分比
            const offsetMs = checkTime - startOfToday.getTime();
            const percent = (offsetMs / totalDuration) * 100;
-           
-           rawMarkers.push({ 
-               id: record.id + '_' + checkTime, 
-               percent, 
-               time: formatTimeOnly(current), 
-               color: type.color, 
-               name: type.name, 
-               originalRecordId: record.id, 
-               interval: type.interval 
-           });
+           rawMarkers.push({ id: record.id + '_' + checkTime, percent, time: formatTimeOnly(current), color: type.color, name: type.name, originalRecordId: record.id, interval: type.interval });
         }
         checkTime += intervalMs;
       }
@@ -141,7 +214,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     return rawMarkers.map(marker => {
       let assignedLevel = 0;
       for (let i = 0; i < levels.length; i++) {
-        // 48 小時，1% 代表約 30 分鐘，閾值設 1.5% 防止文字重疊
         if (marker.percent > levels[i] + 1.5) { assignedLevel = i; levels[i] = marker.percent; break; }
         if (i === levels.length - 1) { assignedLevel = 0; levels[0] = marker.percent; }
       }
@@ -151,7 +223,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
 
   const markers = calculate2DayMarkers();
   
-  // 計算 NOW 線位置 (相對於 48 小時)
+  // 計算 NOW 線 (依賴 now 變數，已包含 offset)
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const totalDuration = 48 * 60 * 60 * 1000;
@@ -159,7 +231,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const currentPercent = Math.max(0, Math.min(100, (currentOffset / totalDuration) * 100));
 
   const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
-
   const theme = { text: 'text-[var(--app-text)]', subText: 'opacity-60', input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' };
 
   const groupedEvents = {
@@ -175,89 +246,52 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     <div className="p-4 h-[calc(100vh-80px)] flex flex-col" style={{ color: 'var(--app-text)' }}>
       <ToastNotification message={toastMsg} isVisible={!!toastMsg} />
 
-      {/* === Timeline Section (2-Day Single Line, Full Width) === */}
-      <div className="mb-6 relative">
+      {/* === Timeline Section === */}
+      <div className="mb-2 relative">
          <div className="flex relative mb-1 text-xs opacity-70 font-bold px-1 w-full">
              <span className="w-1/2 text-center border-r border-white/20">Today</span>
              <span className="w-1/2 text-center">Tomorrow</span>
          </div>
          
-         {/* 容器寬度 100% 不捲動，移除 overflow-hidden 以顯示 Tooltips */}
-         <div 
-            className="w-full relative mt-8 rounded border" 
-            style={{ background: 'var(--card-bg)', borderColor: 'var(--sidebar-border)' }}
-         >
-            {/* 實際內容寬度 100% */}
+         <div className="w-full relative mt-8 rounded border" style={{ background: 'var(--card-bg)', borderColor: 'var(--sidebar-border)' }}>
             <div className="h-16 relative w-full">
-                
-                {/* 1. 高光區域 (黃色) - 遍歷 2 天 (今天, 明天) */}
-                {[0, 1].map(dayOffset => (
-                    highlightHours.map(h => {
-                        // 48 小時制：每天佔 50%，每小時佔 50/24 = 2.083%
-                        const hourPercent = (h / 24) * 50; 
-                        const startPercent = (dayOffset * 50) + hourPercent;
-                        const widthPercent = (1 / 24) * 50; // 1小時寬度
-                        return (
-                            <div key={`hl-${dayOffset}-${h}`} className="absolute top-0 bottom-0 bg-yellow-500/10 border-x border-yellow-500/20 z-0" 
-                                style={{ left: `${startPercent}%`, width: `${widthPercent}%` }} />
-                        );
-                    })
-                ))}
-
-                {/* 2. 小時刻度 - 遍歷 48 小時 */}
+                {[0, 1].map(dayOffset => (highlightHours.map(h => {
+                    const hourPercent = (h / 24) * 50; const startPercent = (dayOffset * 50) + hourPercent; const widthPercent = (1 / 24) * 50;
+                    return (<div key={`hl-${dayOffset}-${h}`} className="absolute top-0 bottom-0 bg-yellow-500/10 border-x border-yellow-500/20 z-0" style={{ left: `${startPercent}%`, width: `${widthPercent}%` }} />);
+                })))}
                 {[...Array(48)].map((_, i) => {
-                    const hour = i % 24;
-                    const percent = (i / 48) * 100;
-                    return (
-                        <div key={i} className="absolute top-0 bottom-0 border-l border-white/10 z-10" style={{ left: `${percent}%` }}>
-                            {/* 每 3 小時顯示一次數字，加粗加大字體 */}
-                            {hour % 3 === 0 && (
-                                <span className="absolute -bottom-5 -translate-x-1/2 text-xs font-bold font-mono opacity-60 select-none">
-                                    {hour}
-                                </span>
-                            )}
-                        </div>
-                    );
+                    const hour = i % 24; const percent = (i / 48) * 100;
+                    return (<div key={i} className="absolute top-0 bottom-0 border-l border-white/10 z-10" style={{ left: `${percent}%` }}>{hour % 3 === 0 && (<span className="absolute -bottom-5 -translate-x-1/2 text-xs font-bold font-mono opacity-60 select-none">{hour}</span>)}</div>);
                 })}
-
-                {/* 3. 分隔線 (今天與明天之間) */}
                 <div className="absolute top-0 bottom-0 border-l-2 border-white/40 z-10" style={{ left: '50%' }}></div>
-
-                {/* 4. NOW Current Line */}
-                <div className="absolute top-[-24px] bottom-0 w-0.5 bg-red-500 z-20 shadow-[0_0_8px_rgba(239,68,68,0.8)] pointer-events-none" 
-                     style={{ left: `${currentPercent}%` }}>
-                    <div className="absolute -top-1 -translate-x-1/2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded font-bold shadow-md whitespace-nowrap">
-                        NOW
-                    </div>
+                <div className="absolute top-[-24px] bottom-0 w-0.5 bg-red-500 z-20 shadow-[0_0_8px_rgba(239,68,68,0.8)] pointer-events-none" style={{ left: `${currentPercent}%` }}>
+                    <div className="absolute -top-1 -translate-x-1/2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded font-bold shadow-md whitespace-nowrap">NOW</div>
                 </div>
-
-                {/* 5. Boss Markers */}
                 {markers.map((m, idx) => (
-                    <div key={idx} className="absolute w-1.5 z-30 hover:z-40 group cursor-pointer transition-all hover:w-3 hover:brightness-125 border-l border-white/20"
-                        style={{ left: `${m.percent}%`, backgroundColor: m.color, top: `${m.level * 25}%`, height: `25%` }}
-                        onClick={() => { if(window.confirm(`刪除 ${m.name}?`)) handleDeleteTimelineRecord(m.originalRecordId); }}
-                    >
-                        {/* Tooltip */}
+                    <div key={idx} className="absolute w-1.5 z-30 hover:z-40 group cursor-pointer transition-all hover:w-3 hover:brightness-125 border-l border-white/20" style={{ left: `${m.percent}%`, backgroundColor: m.color, top: `${m.level * 25}%`, height: `25%` }} onClick={() => { if(window.confirm(`刪除 ${m.name}?`)) handleDeleteTimelineRecord(m.originalRecordId); }}>
                         <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 px-2 py-1 rounded text-xs whitespace-nowrap shadow-lg hidden group-hover:block z-50 pointer-events-none bg-gray-900 text-white border border-gray-600">
-                            <div className="font-bold flex items-center gap-1">
-                                <div className="w-2 h-2 rounded-full" style={{background: m.color}}></div>
-                                {m.name}
-                            </div>
-                            <div className="font-mono text-center opacity-80">{m.time}</div>
+                            <div className="font-bold flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background: m.color}}></div>{m.name}</div><div className="font-mono text-center opacity-80">{m.time}</div>
                         </div>
                     </div>
                 ))}
             </div>
          </div>
-         {/* 底部預留空間給時間刻度 */}
-         <div className="h-6"></div>
+         
+         {/* 🟢 插入掛賣建議條 */}
+         <SellerSuggestionStrip isDarkMode={isDarkMode} />
       </div>
 
       {/* 2. Control Bar */}
-      <div className="mb-4 p-3 rounded-xl shadow-lg flex flex-wrap items-center justify-between gap-4 backdrop-blur-sm border border-white/10" style={{ background: 'var(--card-bg)' }}>
+      <div className="mt-4 mb-4 p-3 rounded-xl shadow-lg flex flex-wrap items-center justify-between gap-4 backdrop-blur-sm border border-white/10" style={{ background: 'var(--card-bg)' }}>
         <div className="flex items-center gap-4">
           <Clock size={32} className="opacity-80"/>
-          <div><span className="text-xs opacity-70 font-bold tracking-widest">CURRENT TIME</span><span className="text-2xl font-mono font-bold block leading-none">{formatTimeWithSeconds(now)}</span></div>
+          <div>
+            <span className="text-xs opacity-70 font-bold tracking-widest flex items-center gap-1">
+                CURRENT TIME
+                {isTimeSynced && <Globe size={10} className="text-green-500" title="已與伺服器時間同步"/>}
+            </span>
+            <span className="text-2xl font-mono font-bold block leading-none">{formatTimeWithSeconds(now)}</span>
+          </div>
         </div>
         {nextBoss ? (
             <div className="flex items-center gap-3 bg-black/10 px-4 py-2 rounded-lg border border-white/10">
@@ -269,11 +303,25 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         <div className="flex gap-2">
             <button onClick={() => setIsTimelineSettingsOpen(true)} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-orange-600 hover:bg-orange-500 text-sm"><Settings size={16}/> 時間線設定</button>
             <button onClick={() => { setEditingBossId(null); setNewBossForm({ name: '', respawnMinutes: 60, color: getRandomBrightColor(), stars: 0 }); setIsCreateBossModalOpen(true); }} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-blue-600 hover:bg-blue-500 text-sm"><Plus size={16}/> 建立 Boss</button>
-            <button onClick={() => { setEditingEventId(null); setRecordForm({ templateId: bossTemplates[0]?.id || '', timeMode: 'current', specificDate: getCurrentDateStr(), specificTime: getCurrentTimeStr() }); setIsAddRecordModalOpen(true); }} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-blue-600 hover:bg-blue-500 text-sm"><Tag size={16}/> 新增紀錄</button>
+            <button onClick={() => { 
+                setEditingEventId(null); 
+                // 🟢 預設帶入校正後的當前時間
+                const nowSynced = new Date(Date.now() + timeOffset);
+                const dStr = nowSynced.toISOString().split('T')[0];
+                const tStr = `${String(nowSynced.getHours()).padStart(2,'0')}:${String(nowSynced.getMinutes()).padStart(2,'0')}`;
+                
+                setRecordForm({ 
+                    templateId: bossTemplates[0]?.id || '', 
+                    timeMode: 'specific', // 直接切換到指定時間模式方便修改
+                    specificDate: dStr, 
+                    specificTime: tStr
+                }); 
+                setIsAddRecordModalOpen(true); 
+            }} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-blue-600 hover:bg-blue-500 text-sm"><Tag size={16}/> 新增紀錄</button>
         </div>
       </div>
 
-      {/* 3. Main Content */}
+      {/* 3. Main Content (保持不變) */}
       <div className="flex flex-col lg:flex-row gap-4 h-full overflow-hidden">
         <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 h-full overflow-y-auto pb-4 custom-scrollbar">
             {['yesterday', 'today', 'tomorrow'].map(dayKey => (
@@ -309,7 +357,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* Modals 保持不變 */}
+      {/* Modals */}
       {isCreateBossModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-xl p-6 shadow-2xl flex flex-col max-h-[90vh]" style={{ background: 'var(--card-bg)' }}>
@@ -328,22 +376,19 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             <h3 className="text-lg font-bold mb-4">{editingEventId ? '修改計時時間' : '新增計時'}</h3>
             <div className="space-y-4">
               <div><label className="text-xs opacity-70">選擇 Boss</label><select className={`w-full p-2 rounded border ${theme.input}`} value={recordForm.templateId} onChange={e=>setRecordForm({...recordForm, templateId: e.target.value})} disabled={!!editingEventId}><option value="" disabled>請選擇...</option>{bossTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-              <div className="flex gap-2 text-xs"><button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button><button 
-        onClick={() => {
-            // 這裡加入抓取當前時間的邏輯
-            const nowStr = getCurrentDateStr();
-            const timeStr = getCurrentTimeStr().slice(0, 5); // 取 HH:mm
-            setRecordForm({
-                ...recordForm, 
-                timeMode: 'specific',
-                specificDate: nowStr,
-                specificTime: timeStr
-            });
-        }} 
-        className={`flex-1 py-2 rounded border ${recordForm.timeMode==='specific' ? 'bg-blue-600 text-white' : 'opacity-50'}`}
-    >
-        指定時間
-    </button></div>
+              <div className="flex gap-2 text-xs">
+                  <button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button>
+                  {/* 🟢 修改：指定時間按鈕也自動帶入校正後時間 */}
+                  <button onClick={()=>{
+                      const nowSynced = new Date(Date.now() + timeOffset);
+                      setRecordForm({
+                          ...recordForm, 
+                          timeMode: 'specific',
+                          specificDate: nowSynced.toISOString().split('T')[0],
+                          specificTime: `${String(nowSynced.getHours()).padStart(2,'0')}:${String(nowSynced.getMinutes()).padStart(2,'0')}`
+                      });
+                  }} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='specific' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>指定時間</button>
+              </div>
               {recordForm.timeMode === 'specific' && (<div className="grid grid-cols-2 gap-2"><input type="date" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificDate} onChange={e=>setRecordForm({...recordForm, specificDate: e.target.value})}/><input type="time" step="1" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificTime} onChange={e=>setRecordForm({...recordForm, specificTime: e.target.value})}/></div>)}
               <div className="flex justify-end gap-2 mt-4"><button onClick={() => setIsAddRecordModalOpen(false)} className="px-4 py-2 bg-gray-500 text-white rounded">取消</button><button onClick={handleSaveRecord} className="px-4 py-2 bg-blue-600 text-white rounded">儲存</button></div>
             </div>

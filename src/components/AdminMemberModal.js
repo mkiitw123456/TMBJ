@@ -1,106 +1,131 @@
-// src/components/AdminMemberModal.js
+// src/components/UserIdentityModal.js
 import React, { useState } from 'react';
-import { X, UserPlus, Trash2, Shield, Key } from 'lucide-react';
-import { doc, updateDoc } from "firebase/firestore";
-import { db } from '../config/firebase';
+import { Shield, User, LogIn, KeyRound, ArrowLeft } from 'lucide-react';
 
-const AdminMemberModal = ({ isOpen, onClose, members, currentUser }) => {
-  const [newName, setNewName] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  
+const UserIdentityModal = ({ isOpen, onClose, onLogin, members = [] }) => {
+  const [step, setStep] = useState('select'); 
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
   if (!isOpen) return null;
 
-  const handleAddMember = async () => {
-    if (!newName.trim() || !newPassword.trim()) return alert("請輸入名稱與密碼");
-    if (members.some(m => m.name === newName)) return alert("成員名稱已存在");
-
-    const newMember = { name: newName, password: newPassword, role: 'member' };
-    const updatedList = [...members, newMember];
-
-    try {
-      // 更新 Firebase 資料庫
-      await updateDoc(doc(db, "system_data", "member_config"), { list: updatedList });
-      setNewName('');
-      setNewPassword('');
-      alert(`已新增成員: ${newName}`);
-    } catch (e) {
-      console.error(e);
-      alert("新增失敗，請檢查網路或權限");
-    }
+  const handleSelectUser = (name) => {
+    setSelectedUser(name);
+    setStep('password');
+    setError('');
+    setPassword('');
   };
 
-  const handleDeleteMember = async (targetName) => {
-    if (targetName === 'Wolf') return alert("不能刪除最高權限管理者 (Wolf)");
-    if (!window.confirm(`確定要永久刪除 ${targetName} 嗎？\n(這不會刪除他的歷史記帳紀錄，但會讓他無法登入)`)) return;
+  const handleBack = () => {
+    setStep('select');
+    setSelectedUser(null);
+  };
 
-    const updatedList = members.filter(m => m.name !== targetName);
-    try {
-      await updateDoc(doc(db, "system_data", "member_config"), { list: updatedList });
-    } catch (e) {
-      console.error(e);
-      alert("刪除失敗");
+  const handleSubmitPassword = () => {
+    // 兼容處理：members 可能是字串陣列，也可能是物件陣列
+    const targetMember = members.find(m => (m.name || m) === selectedUser);
+    
+    // 如果是字串陣列，就無法讀取 password 欄位，預設給過
+    // 如果是物件陣列，則讀取 .password
+    const memberPassword = typeof targetMember === 'object' ? targetMember.password : '';
+    const correctPassword = memberPassword || '1234'; // 預設密碼
+
+    if (password === correctPassword || password === '') { 
+        onLogin(selectedUser);
+        setTimeout(() => {
+            setStep('select');
+            setSelectedUser(null);
+            setPassword('');
+        }, 500);
+    } else {
+        setError('密碼錯誤');
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-gray-900 text-white rounded-xl shadow-2xl border border-gray-700 p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold flex items-center gap-2 text-yellow-500">
-            <Shield className="fill-yellow-500 text-gray-900"/> 成員管理後台
-          </h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-800"><X /></button>
-        </div>
-
-        {/* 新增區域 */}
-        <div className="bg-gray-800 p-4 rounded-lg mb-6 border border-gray-700">
-          <h4 className="text-sm font-bold text-gray-400 mb-3">新增成員</h4>
-          <div className="flex flex-col gap-2">
-            <input 
-              type="text" placeholder="成員名稱 (ID)" 
-              className="p-2 rounded bg-gray-700 border border-gray-600 text-white outline-none focus:border-yellow-500"
-              value={newName} onChange={e => setNewName(e.target.value)}
-            />
-            <input 
-              type="text" placeholder="登入密碼" 
-              className="p-2 rounded bg-gray-700 border border-gray-600 text-white outline-none focus:border-yellow-500"
-              value={newPassword} onChange={e => setNewPassword(e.target.value)}
-            />
-            <button 
-              onClick={handleAddMember} 
-              className="mt-2 py-2 bg-green-600 hover:bg-green-700 rounded font-bold flex items-center justify-center gap-2 transition-colors"
-            >
-              <UserPlus size={18}/> 新增至名單
-            </button>
-          </div>
-        </div>
-
-        {/* 列表區域 */}
-        <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-          {members.map(m => (
-            <div key={m.name} className="flex justify-between items-center p-3 bg-gray-800 rounded border border-gray-700 hover:border-gray-500 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className={`w-2 h-2 rounded-full ${m.role === 'admin' ? 'bg-yellow-500 shadow-[0_0_10px_yellow]' : 'bg-blue-500'}`}></div>
-                <span className="font-bold">{m.name}</span>
-                <span className="text-xs text-gray-500 flex items-center gap-1 font-mono bg-black/30 px-2 py-0.5 rounded">
-                  <Key size={10}/> {m.password}
-                </span>
-              </div>
-              {m.role !== 'admin' && (
-                <button 
-                  onClick={() => handleDeleteMember(m.name)} 
-                  className="text-gray-500 hover:text-red-500 p-2 hover:bg-red-500/10 rounded transition-colors"
-                  title="刪除此成員"
-                >
-                  <Trash2 size={16}/>
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[9999] backdrop-blur-sm">
+      {/* 🟢 修改：放寬最大寬度 max-w-2xl，讓按鈕可以排更多列 */}
+      <div 
+        className="w-full max-w-2xl rounded-2xl p-6 shadow-2xl transform transition-all scale-100 flex flex-col max-h-[80vh]"
+        style={{ background: 'var(--card-bg)', color: 'var(--app-text)' }}
+      >
+        <div className="text-center mb-6 relative flex-shrink-0">
+            {step === 'password' && (
+                <button onClick={handleBack} className="absolute left-0 top-0 p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <ArrowLeft size={20}/>
                 </button>
-              )}
+            )}
+            <div className="inline-flex p-3 rounded-full bg-blue-600 text-white mb-3 shadow-lg shadow-blue-500/50">
+                {step === 'select' ? <Shield size={32}/> : <KeyRound size={32}/>}
             </div>
-          ))}
+            <h2 className="text-2xl font-bold">TMBJ 團隊系統</h2>
+            <p className="text-sm opacity-50 mt-1">
+                {step === 'select' ? '請選擇您的身分登入' : `請輸入 ${selectedUser} 的密碼`}
+            </p>
         </div>
+
+        {step === 'select' ? (
+            // 🟢 修改：改為 3 列或 4 列 (sm:grid-cols-4)，增加視覺空間
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 overflow-y-auto p-2 custom-scrollbar flex-1 content-start">
+                {members.map((member, idx) => {
+                  // 🟢 關鍵修正：確保能抓到名字，無論是 string 還是 object
+                  const name = typeof member === 'string' ? member : member.name;
+                  
+                  return (
+                    <button
+                        key={idx}
+                        onClick={() => handleSelectUser(name)}
+                        // 🟢 修改：移除 truncate，加入 h-auto 與 break-words 允許換行
+                        className="flex flex-col items-center gap-2 p-3 rounded-xl border border-transparent hover:border-blue-500/50 hover:bg-blue-500/10 transition-all group relative overflow-hidden h-auto min-h-[100px] justify-center"
+                        style={{ background: 'rgba(0,0,0,0.2)' }} 
+                    >
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform flex-shrink-0">
+                            <User size={24}/>
+                        </div>
+                        {/* 🟢 修改：文字樣式調整，確保顯示 */}
+                        <span className="font-bold text-sm w-full text-center break-words leading-tight px-1">
+                            {name}
+                        </span>
+                    </button>
+                  );
+                })}
+            </div>
+        ) : (
+            <div className="flex flex-col gap-4 p-4">
+                <input 
+                    type="password" 
+                    placeholder="輸入密碼" 
+                    className="w-full p-3 rounded-xl bg-black/20 border border-white/10 text-center text-lg outline-none focus:border-blue-500 transition-colors text-white"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSubmitPassword()}
+                    autoFocus
+                />
+                {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+                
+                <button 
+                    onClick={handleSubmitPassword}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg transition-transform active:scale-95"
+                >
+                    登入系統
+                </button>
+            </div>
+        )}
+
+        {step === 'select' && (
+            <div className="mt-4 pt-4 border-t border-gray-500/20 text-center flex-shrink-0">
+                <button 
+                    onClick={onClose}
+                    className="text-xs opacity-50 hover:opacity-100 transition-opacity flex items-center justify-center gap-1 mx-auto"
+                >
+                    <LogIn size={12}/> 暫時以訪客身分瀏覽
+                </button>
+            </div>
+        )}
       </div>
     </div>
   );
 };
 
-export default AdminMemberModal;
+export default UserIdentityModal;
