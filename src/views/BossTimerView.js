@@ -285,7 +285,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
                 <h3 className="font-bold mb-2 text-center py-2 border-b border-white/10 flex items-center justify-center gap-2">
                     <List size={18}/> 重生監控清單 ({sortedEvents.length})
                 </h3>
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto space-y-2 p-3 custom-scrollbar">
                     {/* 直接顯示所有事件，不過濾 */}
                     {sortedEvents.map(event => (
                         <EventItem 
