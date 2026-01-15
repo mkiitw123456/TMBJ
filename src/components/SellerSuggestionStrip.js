@@ -81,16 +81,17 @@ const SellerSuggestionStrip = ({ isDarkMode, vertical = false }) => {
   if (loading) return null;
 
   // 🟢 樣式判斷：垂直模式 vs 橫條模式
-  const containerClass = vertical 
-    ? "h-full flex flex-col" // 垂直：撐滿高度
-    : `mt-4 p-3 rounded-xl border flex flex-col gap-2 ${isDarkMode ? 'bg-orange-900/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`; // 橫向：原本的樣式
+const containerClass = vertical 
+    ? "h-full flex flex-col" 
+    : `mt-4 p-3 rounded-xl border flex flex-col gap-2 ${isDarkMode ? 'bg-orange-900/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`;
 
   const listClass = vertical
-    ? "flex flex-col gap-2 overflow-y-auto pr-1 custom-scrollbar flex-1" // 垂直：上下捲動
-    : "flex overflow-x-auto gap-3 pb-1 no-scrollbar"; // 橫向：左右捲動
+    // 🟢 修改：增加 p-2 內距防止切邊
+    ? "flex flex-col gap-2 overflow-y-auto p-2 custom-scrollbar flex-1" 
+    : "flex overflow-x-auto gap-3 pb-1 no-scrollbar";
 
   const headerClass = vertical
-    ? "mb-2 pb-2 border-b border-white/10 text-center py-2" // 垂直：標題置中加底線
+    ? "mb-2 pb-2 border-b border-white/10 text-center py-2"
     : "flex justify-between items-center";
 
   return (

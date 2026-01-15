@@ -1,6 +1,6 @@
 // src/components/EventItem.js
 import React from 'react';
-import { MapPin, Skull, Clock, RefreshCw, RotateCcw, Star } from 'lucide-react'; 
+import { MapPin, Skull, Clock, RefreshCw, RotateCcw, Star, Calendar } from 'lucide-react'; 
 import { formatTimeWithSeconds } from '../utils/helpers';
 
 const EventItem = ({ 
@@ -12,6 +12,10 @@ const EventItem = ({
 }) => {
   
   const isOverdue = now && (now - new Date(event.respawnTime) > 60000);
+  const respawnDate = new Date(event.respawnTime);
+
+  // 格式化日期 MM/DD
+  const dateStr = `${respawnDate.getMonth() + 1}/${respawnDate.getDate()}`;
 
   const renderStars = (count) => {
     if (!count || count <= 0) return null;
@@ -26,9 +30,12 @@ const EventItem = ({
 
   return (
     <div 
-      className={`p-3 mb-2 rounded shadow-sm flex justify-between items-center transition-colors relative group border-l-4 ${isOverdue ? 'border-red-600' : ''}`} 
+      className={`
+        p-3 mb-2 rounded shadow-sm flex justify-between items-center transition-all relative group border-l-4 
+        ${isOverdue ? 'animate-pulse ring-2 ring-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]' : ''} 
+      `} 
       style={{ 
-        borderLeftColor: isOverdue ? undefined : event.color,
+        borderLeftColor: event.color, // 🟢 永遠保持 Boss 設定的顏色
         background: 'var(--card-bg)', 
         color: 'var(--card-text)',
         cursor: 'pointer' 
@@ -38,7 +45,6 @@ const EventItem = ({
       <div>
         <div className="font-bold text-sm flex items-center gap-2">
           {event.name}
-          {/* 雖然移除了地圖功能，但如果舊資料有座標，這個圖示還是會顯示，保留原味 */}
           {event.mapPos && <MapPin size={12} className="text-blue-500" />}
         </div>
         
@@ -47,8 +53,14 @@ const EventItem = ({
         <div className="text-xs opacity-70 flex items-center gap-1 mt-1">
           <Skull size={10}/> 亡: {formatTimeWithSeconds(new Date(event.deathTime))}
         </div>
-        <div className={`text-lg font-mono font-bold flex items-center gap-1 ${isOverdue ? 'text-red-500 animate-pulse' : 'text-blue-500'}`}>
-          <Clock size={14}/> {formatTimeWithSeconds(new Date(event.respawnTime))}
+        
+        <div className={`text-lg font-mono font-bold flex items-center gap-2 ${isOverdue ? 'text-red-500' : 'text-blue-500'}`}>
+          <div className="flex items-center gap-1 text-xs opacity-80 font-sans border px-1 rounded border-current">
+             <Calendar size={10}/> {dateStr}
+          </div>
+          <div className="flex items-center gap-1">
+             <Clock size={14}/> {formatTimeWithSeconds(respawnDate)}
+          </div>
         </div>
       </div>
 
