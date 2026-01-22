@@ -63,12 +63,17 @@ export const sendLog = async (user, action, details) => {
       timestamp: new Date().toISOString()
     });
 
+    // 🟢 新增：在這裡生成當前時間字串 HH:mm:ss
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
     if (DISCORD_LOG_WEBHOOK_URL) {
       await fetch(DISCORD_LOG_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `📝 **[LOG]** ${user} - ${action}: ${details}`
+          // 🟢 修改：在 details 後面補上時間
+          content: `📝 **[LOG]** ${user} - ${action}: ${details} (${timeStr})`
         })
       });
     }
