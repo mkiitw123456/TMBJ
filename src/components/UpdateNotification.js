@@ -1,6 +1,6 @@
 // src/components/UpdateNotification.js
 import React from 'react';
-import { RefreshCcw, AlertTriangle } from 'lucide-react'; // 補一個 Alert 圖示
+import { RefreshCcw } from 'lucide-react'; // 補一個 Alert 圖示
 import { APP_VERSION } from '../utils/constants';
 
 const UpdateNotification = ({ show, remoteVersion, onRefresh }) => {

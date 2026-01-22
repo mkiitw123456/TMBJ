@@ -1,6 +1,6 @@
 // src/components/CostCalculatorModal.js
 import React, { useState, useEffect } from 'react';
-import { Calculator, X, Plus, Trash2, Package, Coins, ArrowRight, Percent } from 'lucide-react';
+import { Calculator, X, Plus, Trash2, Package, Coins, ArrowRight} from 'lucide-react';
 import { BASE_LISTING_FEE_PERCENT, EXCHANGE_TYPES } from '../utils/constants';
 
 const CostCalculatorModal = ({ isOpen, onClose, theme }) => {
