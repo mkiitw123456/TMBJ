@@ -38,7 +38,7 @@ const EditableField = ({ value, onSave, type = "text", className, placeholder, .
   }, [value]);
 
   const handleBlur = () => {
-    if (localValue != value) {
+    if (localValue !== value) {
       onSave(localValue);
     }
   };

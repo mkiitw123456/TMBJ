@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trash2, CheckCircle, X } from 'lucide-react';
 import { EXCHANGE_TYPES, BASE_LISTING_FEE_PERCENT } from '../utils/constants';
-import { calculateFinance, sendLog } from '../utils/helpers';
+import { calculateFinance } from '../utils/helpers';
 
 // 內建簡單日期格式化 (確保不依賴外部)
 const formatDate = (isoString) => {
