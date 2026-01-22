@@ -1,7 +1,7 @@
 // src/views/BossTimerView.js
 import React, { useState, useEffect } from 'react';
 import { 
-  Clock, Plus, Tag, RefreshCw, Star, X, Trash2, Edit3, List, Settings, Loader2, Globe
+  Clock, Plus, Tag, RefreshCw, X, Trash2, Edit3, List, Settings, Loader2, Globe
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';

@@ -1,6 +1,6 @@
 // src/components/ThemeEditor.js
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Save, RotateCcw, Palette } from 'lucide-react';
+import { Settings, X, RotateCcw, Palette } from 'lucide-react';
 
 const ThemeEditor = ({ isOpen, onClose }) => {
   // 預設樣式變數
