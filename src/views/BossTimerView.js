@@ -1,16 +1,16 @@
 // src/views/BossTimerView.js
 import React, { useState, useEffect } from 'react';
 import { 
-  Clock, Plus, Tag, RefreshCw, X, Trash2, Edit3, List, Settings, Loader2, Globe
+  Clock, Plus, Tag, RefreshCw, Star, X, Trash2, Edit3, List, Settings, Loader2, Globe, Shield, Swords
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
-// 🟢 修正：移除了 getRelativeDay, getCurrentDateStr, getCurrentTimeStr
 import { 
   formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog 
 } from '../utils/helpers';
 import ToastNotification from '../components/ToastNotification';
 import EventItem from '../components/EventItem';
+// 引入掛賣建議條元件
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 const BossTimerView = ({ isDarkMode, currentUser }) => {
@@ -37,7 +37,8 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const [editingBossId, setEditingBossId] = useState(null);
   const [editingEventId, setEditingEventId] = useState(null);
 
-  const [newBossForm, setNewBossForm] = useState({ name: '', respawnMinutes: 60, color: '#FF5733', stars: 0 });
+  // 🟢 State 設定：新增 faction 欄位，預設 'elyos' (天族)
+  const [newBossForm, setNewBossForm] = useState({ name: '', respawnMinutes: 60, color: '#FF5733', stars: 0, faction: 'elyos' });
   const [recordForm, setRecordForm] = useState({ templateId: '', timeMode: 'current', specificDate: '', specificTime: '' });
   
   const [timelineTypeForm, setTimelineTypeForm] = useState({ name: '', interval: 60, color: '#FF5733' });
@@ -48,11 +49,8 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   useEffect(() => {
     if (!db) return;
     const unsub1 = onSnapshot(collection(db, "boss_templates"), snap => setBossTemplates(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
-    // 查詢所有 Boss 事件
     const q2 = query(collection(db, "boss_events"), orderBy("respawnTime", "asc"));
     const unsub2 = onSnapshot(q2, snap => setBossEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
     const q3 = query(collection(db, "timeline_types"), orderBy("interval"));
     const unsub3 = onSnapshot(q3, snap => setTimelineTypes(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const q4 = query(collection(db, "timeline_records"), orderBy("deathTimestamp", "desc"));
@@ -91,7 +89,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
 
   const showToast = (message) => { setToastMsg(message); setTimeout(() => setToastMsg(null), 2000); };
 
-  // ... (操作邏輯保持不變) ...
+  // ... (操作邏輯) ...
   const handleQuickRefresh = async (event) => {
     if (!db) return;
     let intervalMinutes = 0;
@@ -116,7 +114,17 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     try { await updateDoc(doc(db, "boss_events", event.id), { deathTime: previousState.deathTime, respawnTime: previousState.respawnTime }); setUndoHistory(prev => ({ ...prev, [event.id]: prev[event.id].slice(1) })); sendLog(currentUser, "回復時間", `${event.name}`); showToast(`zk 已回復：${event.name}`); } catch(e) { alert("回復失敗"); }
   };
 
-  const handleCreateOrUpdateBoss = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!newBossForm.name) return alert("請輸入 Boss 名稱"); try { if (editingBossId) await updateDoc(doc(db, "boss_templates", editingBossId), newBossForm); else await addDoc(collection(db, "boss_templates"), newBossForm); setIsCreateBossModalOpen(false); sendLog(currentUser, editingBossId ? "修改Boss" : "新增Boss", newBossForm.name); } catch(e) { alert("儲存失敗"); } };
+  const handleCreateOrUpdateBoss = async () => { 
+      if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); 
+      if (!newBossForm.name) return alert("請輸入 Boss 名稱"); 
+      try { 
+          // 🟢 確保儲存 faction
+          if (editingBossId) await updateDoc(doc(db, "boss_templates", editingBossId), newBossForm); 
+          else await addDoc(collection(db, "boss_templates"), newBossForm); 
+          setIsCreateBossModalOpen(false); 
+          sendLog(currentUser, editingBossId ? "修改Boss" : "新增Boss", newBossForm.name); 
+      } catch(e) { alert("儲存失敗"); } 
+  };
   
   const handleSaveRecord = async () => { 
       if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); 
@@ -174,7 +182,19 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
       setIsAddRecordModalOpen(true); 
   };
   
-  const openEditTemplate = (t) => { setEditingBossId(t.id); setNewBossForm({ name: t.name, respawnMinutes: t.respawnMinutes, color: t.color, stars: t.stars || 0 }); setIsCreateBossModalOpen(true); };
+  // 🟢 編輯時載入 faction
+  const openEditTemplate = (t) => { 
+      setEditingBossId(t.id); 
+      setNewBossForm({ 
+          name: t.name, 
+          respawnMinutes: t.respawnMinutes, 
+          color: t.color, 
+          stars: t.stars || 0,
+          faction: t.faction || 'elyos' 
+      }); 
+      setIsCreateBossModalOpen(true); 
+  };
+  
   const handleAddTimelineType = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineTypeForm.name || timelineTypeForm.interval <= 0) return alert("資料不完整"); setIsSubmitting(true); try { await addDoc(collection(db, "timeline_types"), timelineTypeForm); setTimelineTypeForm({ name: '', interval: 60, color: '#FF5733' }); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineType = async (id) => { if (currentUser === '訪客') return; if(window.confirm("確定刪除此設定？")) await deleteDoc(doc(db, "timeline_types", id)); };
   const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
@@ -192,11 +212,19 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
   const theme = { text: 'text-[var(--app-text)]', subText: 'opacity-60', input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' };
 
-  // 排序與分組邏輯
+  // 排序
   const sortedEvents = [...bossEvents].sort((a, b) => new Date(a.respawnTime) - new Date(b.respawnTime));
   const nextBoss = sortedEvents.find(e => new Date(e.respawnTime) > now);
-
   const formatDateSimple = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+
+  // 🟢 核心邏輯：將 Boss 依照設定檔 (Template) 的 faction 分類
+  const getFaction = (templateId) => {
+      const t = bossTemplates.find(t => t.id === templateId);
+      return t?.faction || 'elyos'; // 預設歸類為天族 (相容舊資料)
+  };
+
+  const elyosEvents = sortedEvents.filter(e => getFaction(e.templateId) === 'elyos');
+  const asmodianEvents = sortedEvents.filter(e => getFaction(e.templateId) === 'asmodian');
 
   return (
     <div className="p-4 h-[calc(100vh-80px)] flex flex-col" style={{ color: 'var(--app-text)' }}>
@@ -254,7 +282,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
 
         <div className="flex gap-2">
             <button onClick={() => setIsTimelineSettingsOpen(true)} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-orange-600 hover:bg-orange-500 text-sm"><Settings size={16}/> 時間線設定</button>
-            <button onClick={() => { setEditingBossId(null); setNewBossForm({ name: '', respawnMinutes: 60, color: getRandomBrightColor(), stars: 0 }); setIsCreateBossModalOpen(true); }} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-blue-600 hover:bg-blue-500 text-sm"><Plus size={16}/> 建立 Boss</button>
+            <button onClick={() => { setEditingBossId(null); setNewBossForm({ name: '', respawnMinutes: 60, color: getRandomBrightColor(), stars: 0, faction: 'elyos' }); setIsCreateBossModalOpen(true); }} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-blue-600 hover:bg-blue-500 text-sm"><Plus size={16}/> 建立 Boss</button>
             <button onClick={() => { 
                 setEditingEventId(null); 
                 const nowSynced = new Date(Date.now() + timeOffset);
@@ -266,7 +294,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content (4 Cols) */}
       <div className="flex flex-col lg:flex-row gap-4 h-full overflow-hidden">
         
         <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4 h-full overflow-y-auto pb-4 custom-scrollbar">
@@ -276,28 +304,43 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
                 <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} />
             </div>
 
-            {/* 2. 統一 Boss 列表 (不分天) */}
-            <div className="col-span-1 md:col-span-3 rounded-xl p-3 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--card-bg)' }}>
-                <h3 className="font-bold mb-2 text-center py-2 border-b border-white/10 flex items-center justify-center gap-2">
-                    <List size={18}/> 重生監控清單 ({sortedEvents.length})
-                </h3>
-                <div className="flex-1 overflow-y-auto space-y-2 p-3 custom-scrollbar">
-                    {sortedEvents.map(event => (
-                        <EventItem 
-                            key={event.id} 
-                            event={event} 
-                            theme={theme} 
-                            now={now} 
-                            handleDeleteEvent={handleDeleteEvent} 
-                            handleOpenEditEvent={openEditEvent} 
-                            handleQuickRefresh={handleQuickRefresh} 
-                            handleUndo={handleUndo} 
-                            hasUndo={undoHistory[event.id]?.length > 0} 
-                            currentUser={currentUser}
-                        />
-                    ))}
-                    {sortedEvents.length === 0 && <div className="text-center opacity-30 py-10 text-sm">無紀錄</div>}
+            {/* 🟢 4. 監控清單分為兩列：天族 與 魔族 */}
+            <div className="col-span-1 md:col-span-3 flex flex-col md:flex-row gap-4 h-full overflow-hidden">
+                
+                {/* 天族列表 */}
+                <div className="flex-1 rounded-xl p-3 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--card-bg)' }}>
+                    <h3 className="font-bold mb-2 text-center py-2 border-b border-white/10 flex items-center justify-center gap-2 text-green-400">
+                        <Shield size={18}/> 天族 Boss ({elyosEvents.length})
+                    </h3>
+                    <div className="flex-1 overflow-y-auto space-y-2 p-3 custom-scrollbar">
+                        {elyosEvents.map(event => (
+                            <EventItem 
+                                key={event.id} event={event} theme={theme} now={now} 
+                                handleDeleteEvent={handleDeleteEvent} handleOpenEditEvent={openEditEvent} 
+                                handleQuickRefresh={handleQuickRefresh} handleUndo={handleUndo} hasUndo={undoHistory[event.id]?.length > 0} currentUser={currentUser}
+                            />
+                        ))}
+                        {elyosEvents.length === 0 && <div className="text-center opacity-30 py-10 text-sm">無紀錄</div>}
+                    </div>
                 </div>
+
+                {/* 魔族列表 */}
+                <div className="flex-1 rounded-xl p-3 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--card-bg)' }}>
+                    <h3 className="font-bold mb-2 text-center py-2 border-b border-white/10 flex items-center justify-center gap-2 text-red-400">
+                        <Swords size={18}/> 魔族 Boss ({asmodianEvents.length})
+                    </h3>
+                    <div className="flex-1 overflow-y-auto space-y-2 p-3 custom-scrollbar">
+                        {asmodianEvents.map(event => (
+                            <EventItem 
+                                key={event.id} event={event} theme={theme} now={now} 
+                                handleDeleteEvent={handleDeleteEvent} handleOpenEditEvent={openEditEvent} 
+                                handleQuickRefresh={handleQuickRefresh} handleUndo={handleUndo} hasUndo={undoHistory[event.id]?.length > 0} currentUser={currentUser}
+                            />
+                        ))}
+                        {asmodianEvents.length === 0 && <div className="text-center opacity-30 py-10 text-sm">無紀錄</div>}
+                    </div>
+                </div>
+
             </div>
         </div>
         
@@ -322,8 +365,34 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* Modals */}
-      {isCreateBossModalOpen && ( <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm"> <div className="w-full max-w-lg rounded-xl p-6 shadow-2xl flex flex-col max-h-[90vh]" style={{ background: 'var(--card-bg)' }}> <h3 className="text-lg font-bold mb-4">{editingBossId ? '編輯 Boss 設定' : '建立 Boss 設定'}</h3> <div className="space-y-4"> <div className="grid grid-cols-2 gap-2"><input type="text" placeholder="名稱" className={`p-2 rounded border ${theme.input}`} value={newBossForm.name} onChange={e=>setNewBossForm({...newBossForm, name: e.target.value})}/><input type="number" placeholder="週期(分)" className={`p-2 rounded border ${theme.input}`} value={newBossForm.respawnMinutes} onChange={e=>setNewBossForm({...newBossForm, respawnMinutes: parseInt(e.target.value)||0})}/></div> <div className="flex gap-2 items-center"><input type="color" className="h-10 w-20 rounded cursor-pointer" value={newBossForm.color} onChange={e=>setNewBossForm({...newBossForm, color: e.target.value})}/><button onClick={()=>setNewBossForm({...newBossForm, color: getRandomBrightColor()})} className="p-2 bg-gray-500 text-white rounded"><RefreshCw size={16}/></button><div className="flex items-center gap-1 ml-auto"><span className="text-xs">星級</span><input type="number" max="5" min="0" className={`w-16 p-2 rounded border ${theme.input}`} value={newBossForm.stars} onChange={e=>setNewBossForm({...newBossForm, stars: parseInt(e.target.value)})}/></div></div> <div className="flex justify-end gap-2 mt-4"><button onClick={() => {setIsCreateBossModalOpen(false); setEditingBossId(null);}} className="px-4 py-2 bg-gray-500 text-white rounded">取消</button><button onClick={handleCreateOrUpdateBoss} className="px-4 py-2 bg-blue-600 text-white rounded">儲存</button></div> </div> </div> </div> )}
+      {/* 🟢 修改 Create/Edit Modal：加入種族選擇 Radio */}
+      {isCreateBossModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-xl p-6 shadow-2xl flex flex-col max-h-[90vh]" style={{ background: 'var(--card-bg)' }}>
+            <h3 className="text-lg font-bold mb-4">{editingBossId ? '編輯 Boss 設定' : '建立 Boss 設定'}</h3>
+            <div className="space-y-4">
+               <div className="grid grid-cols-2 gap-2"><input type="text" placeholder="名稱" className={`p-2 rounded border ${theme.input}`} value={newBossForm.name} onChange={e=>setNewBossForm({...newBossForm, name: e.target.value})}/><input type="number" placeholder="週期(分)" className={`p-2 rounded border ${theme.input}`} value={newBossForm.respawnMinutes} onChange={e=>setNewBossForm({...newBossForm, respawnMinutes: parseInt(e.target.value)||0})}/></div>
+               
+               {/* 🟢 種族選擇區塊 */}
+               <div className="flex gap-4 p-2 bg-black/10 rounded border border-white/10">
+                   <label className={`flex items-center gap-2 cursor-pointer px-3 py-1 rounded transition-colors ${newBossForm.faction === 'elyos' ? 'bg-green-500/20 text-green-400 font-bold border border-green-500/50' : 'opacity-60 hover:opacity-100'}`}>
+                       <input type="radio" name="faction" value="elyos" className="hidden" checked={newBossForm.faction === 'elyos'} onChange={() => setNewBossForm({...newBossForm, faction: 'elyos'})} />
+                       <Shield size={16}/> 天族
+                   </label>
+                   <label className={`flex items-center gap-2 cursor-pointer px-3 py-1 rounded transition-colors ${newBossForm.faction === 'asmodian' ? 'bg-red-500/20 text-red-400 font-bold border border-red-500/50' : 'opacity-60 hover:opacity-100'}`}>
+                       <input type="radio" name="faction" value="asmodian" className="hidden" checked={newBossForm.faction === 'asmodian'} onChange={() => setNewBossForm({...newBossForm, faction: 'asmodian'})} />
+                       <Swords size={16}/> 魔族
+                   </label>
+               </div>
+
+               <div className="flex gap-2 items-center"><input type="color" className="h-10 w-20 rounded cursor-pointer" value={newBossForm.color} onChange={e=>setNewBossForm({...newBossForm, color: e.target.value})}/><button onClick={()=>setNewBossForm({...newBossForm, color: getRandomBrightColor()})} className="p-2 bg-gray-500 text-white rounded"><RefreshCw size={16}/></button><div className="flex items-center gap-1 ml-auto"><span className="text-xs">星級</span><input type="number" max="5" min="0" className={`w-16 p-2 rounded border ${theme.input}`} value={newBossForm.stars} onChange={e=>setNewBossForm({...newBossForm, stars: parseInt(e.target.value)})}/></div></div>
+               <div className="flex justify-end gap-2 mt-4"><button onClick={() => {setIsCreateBossModalOpen(false); setEditingBossId(null);}} className="px-4 py-2 bg-gray-500 text-white rounded">取消</button><button onClick={handleCreateOrUpdateBoss} className="px-4 py-2 bg-blue-600 text-white rounded">儲存</button></div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 其他 Modal 保持不變 */}
       {isAddRecordModalOpen && ( <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm"> <div className="w-full max-w-sm rounded-xl p-6 shadow-2xl" style={{ background: 'var(--card-bg)' }}> <h3 className="text-lg font-bold mb-4">{editingEventId ? '修改計時時間' : '新增計時'}</h3> <div className="space-y-4"> <div><label className="text-xs opacity-70">選擇 Boss</label><select className={`w-full p-2 rounded border ${theme.input}`} value={recordForm.templateId} onChange={e=>setRecordForm({...recordForm, templateId: e.target.value})} disabled={!!editingEventId}><option value="" disabled>請選擇...</option>{bossTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div> <div className="flex gap-2 text-xs"> <button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button> <button onClick={()=>{ const nowSynced = new Date(Date.now() + timeOffset); setRecordForm({ ...recordForm, timeMode: 'specific', specificDate: nowSynced.toISOString().split('T')[0], specificTime: `${String(nowSynced.getHours()).padStart(2,'0')}:${String(nowSynced.getMinutes()).padStart(2,'0')}` }); }} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='specific' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>指定時間</button> </div> {recordForm.timeMode === 'specific' && (<div className="grid grid-cols-2 gap-2"><input type="date" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificDate} onChange={e=>setRecordForm({...recordForm, specificDate: e.target.value})}/><input type="time" step="1" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificTime} onChange={e=>setRecordForm({...recordForm, specificTime: e.target.value})}/></div>)} <div className="flex justify-end gap-2 mt-4"><button onClick={() => setIsAddRecordModalOpen(false)} className="px-4 py-2 bg-gray-500 text-white rounded">取消</button><button onClick={handleSaveRecord} className="px-4 py-2 bg-blue-600 text-white rounded">儲存</button></div> </div> </div> </div> )}
       {isTimelineSettingsOpen && ( <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[999]"> <div className={`w-full max-w-2xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[85vh]`} style={{ background: 'var(--card-bg)' }}> <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4"> <h3 className="font-bold text-xl flex items-center gap-2"><Settings size={20}/> 時間線設定</h3> <button onClick={()=>setIsTimelineSettingsOpen(false)}><X size={24}/></button> </div> <div className="flex gap-6 h-full overflow-hidden"> <div className="flex-1 flex flex-col border-r border-white/10 pr-6"> <h4 className="font-bold text-sm mb-3 text-orange-400">1. 設定 Boss (Timeline Types)</h4> <div className="space-y-3 mb-4"> <div className="grid grid-cols-2 gap-2"> <input type="text" placeholder="名稱" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.name} onChange={e=>setTimelineTypeForm({...timelineTypeForm, name: e.target.value})}/> <input type="number" placeholder="CD(分)" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.interval} onChange={e=>setTimelineTypeForm({...timelineTypeForm, interval: Number(e.target.value)})}/> </div> <div className="flex gap-2"> <input type="color" className="h-9 w-full rounded cursor-pointer" value={timelineTypeForm.color} onChange={e=>setTimelineTypeForm({...timelineTypeForm, color: e.target.value})}/> <button onClick={handleAddTimelineType} disabled={isSubmitting} className="whitespace-nowrap px-4 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-500">新增</button> </div> </div> <div className="flex-1 overflow-y-auto space-y-1"> {timelineTypes.map(t => ( <div key={t.id} className="flex justify-between items-center text-xs p-2 rounded bg-black/20 hover:bg-black/30"> <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor: t.color}}></div><span>{t.name} ({t.interval}m)</span></div> <button onClick={()=>handleDeleteTimelineType(t.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14}/></button> </div> ))} </div> </div> <div className="flex-1 flex flex-col"> <h4 className="font-bold text-sm mb-3 text-blue-400">2. 設定重生時間</h4> <div className="space-y-3"> <select className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.typeId} onChange={e=>setTimelineRecordForm({...timelineRecordForm, typeId: e.target.value})}> <option value="">選擇 Boss...</option> {timelineTypes.map(t => <option key={t.id} value={t.id} style={{color: 'black'}}>{t.name}</option>)} </select> <div className="grid grid-cols-2 gap-2"> <input type="date" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathDate} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathDate: e.target.value})}/> <input type="time" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathTime} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathTime: e.target.value})}/> </div> <button onClick={handleAddTimelineRecord} disabled={isSubmitting} className="w-full py-2 bg-orange-600 text-white rounded font-bold hover:bg-orange-500 flex justify-center gap-2"> {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : '開始追蹤'} </button> </div> <div className="mt-auto pt-4 text-xs opacity-50">* 此時間線與下方列表獨立運作，用於特定週期監控。</div> </div> </div> </div> </div> )}
     </div>

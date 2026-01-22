@@ -11,11 +11,12 @@ const EventItem = ({
   currentUser 
 }) => {
   
+  // 檢查是否過期超過 1 分鐘
   const isOverdue = now && (now - new Date(event.respawnTime) > 60000);
   const respawnDate = new Date(event.respawnTime);
 
   // 格式化日期 MM/DD
-  const dateStr = `${respawnDate.getMonth() + 1}/${respawnDate.getDate()}`;
+  const dateStr = `${String(respawnDate.getMonth() + 1).padStart(2, '0')}/${String(respawnDate.getDate()).padStart(2, '0')}`;
 
   const renderStars = (count) => {
     if (!count || count <= 0) return null;
@@ -35,7 +36,7 @@ const EventItem = ({
         ${isOverdue ? 'animate-pulse ring-2 ring-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]' : ''} 
       `} 
       style={{ 
-        borderLeftColor: event.color, // 🟢 永遠保持 Boss 設定的顏色
+        borderLeftColor: event.color, // 🟢 永遠保持 Boss 設定的顏色，不被紅色覆蓋
         background: 'var(--card-bg)', 
         color: 'var(--card-text)',
         cursor: 'pointer' 
@@ -55,6 +56,7 @@ const EventItem = ({
         </div>
         
         <div className={`text-lg font-mono font-bold flex items-center gap-2 ${isOverdue ? 'text-red-500' : 'text-blue-500'}`}>
+          {/* 🟢 新增日期顯示 */}
           <div className="flex items-center gap-1 text-xs opacity-80 font-sans border px-1 rounded border-current">
              <Calendar size={10}/> {dateStr}
           </div>
