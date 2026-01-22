@@ -5,12 +5,12 @@ import {
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
+// 🟢 修正：移除了 getRelativeDay, getCurrentDateStr, getCurrentTimeStr
 import { 
   formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog 
 } from '../utils/helpers';
 import ToastNotification from '../components/ToastNotification';
 import EventItem from '../components/EventItem';
-// 引入掛賣建議條元件
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 const BossTimerView = ({ isDarkMode, currentUser }) => {
@@ -49,7 +49,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     if (!db) return;
     const unsub1 = onSnapshot(collection(db, "boss_templates"), snap => setBossTemplates(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
-    // 🟢 查詢所有 Boss 事件，不分日期，統一抓回來
+    // 查詢所有 Boss 事件
     const q2 = query(collection(db, "boss_events"), orderBy("respawnTime", "asc"));
     const unsub2 = onSnapshot(q2, snap => setBossEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
@@ -73,10 +73,9 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
                 const offset = serverTime - clientTime;
                 setTimeOffset(offset);
                 setIsTimeSynced(true);
-                console.log(`[Time Sync] 校正完成，誤差: ${offset}ms`);
             }
         } catch (e) {
-            console.warn("時間校正失敗，將使用本機時間", e);
+            console.warn("Time sync failed", e);
         }
     };
     syncTime();
@@ -181,7 +180,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineRecord = async (id) => { if (currentUser === '訪客') return; if(window.confirm("刪除此紀錄？")) await deleteDoc(doc(db, "timeline_records", id)); };
 
-  // Markers Logic (保持不變)
+  // Markers Logic
   const calculate2DayMarkers = () => { const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0); const totalDuration = 48 * 60 * 60 * 1000; const endOfTomorrow = new Date(startOfToday.getTime() + totalDuration); let rawMarkers = []; timelineRecords.forEach(record => { const type = timelineTypes.find(t => t.id === record.typeId); if (!type) return; const intervalMs = type.interval * 60 * 1000; let checkTime = record.deathTimestamp; if (checkTime < startOfToday.getTime()) { const diff = startOfToday.getTime() - checkTime; const jumps = Math.floor(diff / intervalMs); checkTime += jumps * intervalMs; } while (checkTime <= endOfTomorrow.getTime() + intervalMs) { if (checkTime >= startOfToday.getTime() && checkTime <= endOfTomorrow.getTime()) { const current = new Date(checkTime); const offsetMs = checkTime - startOfToday.getTime(); const percent = (offsetMs / totalDuration) * 100; rawMarkers.push({ id: record.id + '_' + checkTime, percent, time: formatTimeOnly(current), color: type.color, name: type.name, originalRecordId: record.id, interval: type.interval }); } checkTime += intervalMs; } }); rawMarkers.sort((a, b) => a.percent - b.percent); const levels = [ -10, -10, -10, -10 ]; return rawMarkers.map(marker => { let assignedLevel = 0; for (let i = 0; i < levels.length; i++) { if (marker.percent > levels[i] + 1.5) { assignedLevel = i; levels[i] = marker.percent; break; } if (i === levels.length - 1) { assignedLevel = 0; levels[0] = marker.percent; } } return { ...marker, level: assignedLevel }; }); };
   const markers = calculate2DayMarkers();
   
@@ -193,11 +192,10 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
   const theme = { text: 'text-[var(--app-text)]', subText: 'opacity-60', input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' };
 
-  // 🟢 核心修改：移除分天邏輯，所有事件統一排序
+  // 排序與分組邏輯
   const sortedEvents = [...bossEvents].sort((a, b) => new Date(a.respawnTime) - new Date(b.respawnTime));
   const nextBoss = sortedEvents.find(e => new Date(e.respawnTime) > now);
 
-  // 🟢 輔助：日期格式化 (MM/DD)
   const formatDateSimple = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 
   return (
@@ -241,7 +239,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
           <Clock size={32} className="opacity-80"/>
           <div>
             <span className="text-xs opacity-70 font-bold tracking-widest flex items-center gap-1">
-                {/* 🟢 修改：顯示日期 MM/DD */}
                 CURRENT TIME {formatDateSimple(now)}
                 {isTimeSynced && <Globe size={10} className="text-green-500" title="已與伺服器時間同步"/>}
             </span>
@@ -269,24 +266,22 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* 🟢 修改：佈局大改，使用 grid-cols-4 */}
+      {/* Main Content */}
       <div className="flex flex-col lg:flex-row gap-4 h-full overflow-hidden">
         
-        {/* 主要顯示區 */}
         <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4 h-full overflow-y-auto pb-4 custom-scrollbar">
             
-            {/* 1. 掛賣建議 (垂直版) - 佔 1 份 */}
+            {/* 1. 掛賣建議 (垂直版) */}
             <div className="col-span-1 rounded-xl p-0 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300 overflow-hidden" style={{ background: 'var(--card-bg)' }}>
                 <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} />
             </div>
 
-            {/* 2. 統一 Boss 列表 (不分天) - 佔 3 份 */}
+            {/* 2. 統一 Boss 列表 (不分天) */}
             <div className="col-span-1 md:col-span-3 rounded-xl p-3 flex flex-col border border-white/10 h-full backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--card-bg)' }}>
                 <h3 className="font-bold mb-2 text-center py-2 border-b border-white/10 flex items-center justify-center gap-2">
                     <List size={18}/> 重生監控清單 ({sortedEvents.length})
                 </h3>
                 <div className="flex-1 overflow-y-auto space-y-2 p-3 custom-scrollbar">
-                    {/* 直接顯示所有事件，不過濾 */}
                     {sortedEvents.map(event => (
                         <EventItem 
                             key={event.id} 
@@ -306,7 +301,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             </div>
         </div>
         
-        {/* 右側邊欄 (Boss 設定與簡易清單) */}
+        {/* 右側邊欄 */}
         <div className="w-full lg:w-80 flex flex-col gap-4 h-full overflow-hidden">
             <div className="flex-1 rounded-xl border flex flex-col overflow-hidden backdrop-blur-sm transition-colors duration-300" style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--sidebar-border)' }}>
                 <div className="p-3 border-b border-white/10 font-bold flex items-center gap-2"><List size={16}/> 快速操作列表</div>
