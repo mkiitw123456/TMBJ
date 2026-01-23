@@ -1,16 +1,15 @@
 // src/views/BossTimerView.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Clock, Plus, Tag, RefreshCw, X, Trash2, Edit3, List, Settings, Loader2, Globe, Shield, Swords
+  Clock, Plus, Tag, RefreshCw, Star, X, Trash2, Edit3, List, Settings, Loader2, Globe, Shield, Swords, Bell, BellOff
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { 
-  formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog 
+  formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog, sendNotify 
 } from '../utils/helpers';
 import ToastNotification from '../components/ToastNotification';
 import EventItem from '../components/EventItem';
-// 引入掛賣建議條元件
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 const BossTimerView = ({ isDarkMode, currentUser }) => {
@@ -26,6 +25,11 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const [timeOffset, setTimeOffset] = useState(0); 
   const [isTimeSynced, setIsTimeSynced] = useState(false);
 
+  // 🟢 新增：推播控制狀態
+  const [isNotifier, setIsNotifier] = useState(false);
+  // 用 ref 紀錄已經通知過的事件與秒數，避免重複發送 { eventId: { 60: true, 30: true... } }
+  const notifiedRef = useRef({}); 
+
   const [toastMsg, setToastMsg] = useState(null); 
   const [undoHistory, setUndoHistory] = useState({});
 
@@ -37,7 +41,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const [editingBossId, setEditingBossId] = useState(null);
   const [editingEventId, setEditingEventId] = useState(null);
 
-  // 🟢 State 設定：新增 faction 欄位，預設 'elyos' (天族)
   const [newBossForm, setNewBossForm] = useState({ name: '', respawnMinutes: 60, color: '#FF5733', stars: 0, faction: 'elyos' });
   const [recordForm, setRecordForm] = useState({ templateId: '', timeMode: 'current', specificDate: '', specificTime: '' });
   
@@ -79,17 +82,55 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     syncTime();
   }, []);
 
-  // 計時器
+  // 🟢 核心計時器與推播邏輯
   useEffect(() => {
     const timer = setInterval(() => {
-        setNow(new Date(Date.now() + timeOffset));
+        const currentTime = new Date(Date.now() + timeOffset);
+        setNow(currentTime);
+
+        // 如果開啟了推播模式，檢查是否有 Boss 即將重生
+        if (isNotifier) {
+            bossEvents.forEach(event => {
+                const respawnTime = new Date(event.respawnTime).getTime();
+                const diffMs = respawnTime - currentTime.getTime();
+                const diffSeconds = Math.floor(diffMs / 1000);
+
+                // 只監控未來 1 分鐘內的事件，且不要監控已經過期的
+                if (diffSeconds <= 60 && diffSeconds > 0) {
+                    // 初始化該 event 的紀錄
+                    if (!notifiedRef.current[event.id]) {
+                        notifiedRef.current[event.id] = {};
+                    }
+
+                    const checkPoints = [60, 30, 10, 5, 4, 3, 2, 1];
+                    
+                    if (checkPoints.includes(diffSeconds)) {
+                        // 如果這個秒數還沒通知過
+                        if (!notifiedRef.current[event.id][diffSeconds]) {
+                            // 標記為已通知
+                            notifiedRef.current[event.id][diffSeconds] = true;
+                            
+                            // 發送通知
+                            let msg = '';
+                            if (diffSeconds === 60) msg = `⚠️ **[注意]** ${event.name} 將在 **1分鐘** 後重生！`;
+                            else if (diffSeconds === 30) msg = `⏳ **[倒數]** ${event.name} 還有 **30秒**！`;
+                            else if (diffSeconds === 10) msg = `🔥 **[準備]** ${event.name} 還有 **10秒**！`;
+                            else msg = `⏰ **${event.name}** 倒數: **${diffSeconds}**`;
+
+                            sendNotify(msg);
+                            console.log(`[Notifier] Sent: ${msg}`);
+                        }
+                    }
+                }
+            });
+        }
     }, 1000); 
     return () => clearInterval(timer);
-  }, [timeOffset]);
+  }, [timeOffset, isNotifier, bossEvents]); // 加入依賴
 
   const showToast = (message) => { setToastMsg(message); setTimeout(() => setToastMsg(null), 2000); };
 
-  // ... (操作邏輯) ...
+  // ... (操作邏輯保持不變) ...
   const handleQuickRefresh = async (event) => {
     if (!db) return;
     let intervalMinutes = 0;
@@ -103,7 +144,13 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     const baseTime = new Date(Date.now() + timeOffset);
     const newRespawnTime = new Date(baseTime.getTime() + intervalMinutes * 60000);
     
-    try { await updateDoc(doc(db, "boss_events", event.id), { deathTime: baseTime.toISOString(), respawnTime: newRespawnTime.toISOString() }); sendLog(currentUser, "快速刷新", `${event.name}`); showToast(`🔄 已刷新：${event.name}`); } catch(e) { alert("刷新失敗"); }
+    try { 
+        await updateDoc(doc(db, "boss_events", event.id), { deathTime: baseTime.toISOString(), respawnTime: newRespawnTime.toISOString() }); 
+        sendLog(currentUser, "快速刷新", `${event.name}`); 
+        showToast(`🔄 已刷新：${event.name}`); 
+        // 刷新後清除該 Event 的通知紀錄，讓下次可以再通知
+        if (notifiedRef.current[event.id]) delete notifiedRef.current[event.id];
+    } catch(e) { alert("刷新失敗"); }
   };
 
   const handleUndo = async (event) => {
@@ -111,14 +158,19 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     const history = undoHistory[event.id];
     if (!history || history.length === 0) return alert("沒有可回復的紀錄");
     const previousState = history[0]; 
-    try { await updateDoc(doc(db, "boss_events", event.id), { deathTime: previousState.deathTime, respawnTime: previousState.respawnTime }); setUndoHistory(prev => ({ ...prev, [event.id]: prev[event.id].slice(1) })); sendLog(currentUser, "回復時間", `${event.name}`); showToast(`zk 已回復：${event.name}`); } catch(e) { alert("回復失敗"); }
+    try { 
+        await updateDoc(doc(db, "boss_events", event.id), { deathTime: previousState.deathTime, respawnTime: previousState.respawnTime }); 
+        setUndoHistory(prev => ({ ...prev, [event.id]: prev[event.id].slice(1) })); 
+        sendLog(currentUser, "回復時間", `${event.name}`); 
+        showToast(`zk 已回復：${event.name}`); 
+        if (notifiedRef.current[event.id]) delete notifiedRef.current[event.id];
+    } catch(e) { alert("回復失敗"); }
   };
 
   const handleCreateOrUpdateBoss = async () => { 
       if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); 
       if (!newBossForm.name) return alert("請輸入 Boss 名稱"); 
       try { 
-          // 🟢 確保儲存 faction
           if (editingBossId) await updateDoc(doc(db, "boss_templates", editingBossId), newBossForm); 
           else await addDoc(collection(db, "boss_templates"), newBossForm); 
           setIsCreateBossModalOpen(false); 
@@ -182,7 +234,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
       setIsAddRecordModalOpen(true); 
   };
   
-  // 🟢 編輯時載入 faction
   const openEditTemplate = (t) => { 
       setEditingBossId(t.id); 
       setNewBossForm({ 
@@ -200,7 +251,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineRecord = async (id) => { if (currentUser === '訪客') return; if(window.confirm("刪除此紀錄？")) await deleteDoc(doc(db, "timeline_records", id)); };
 
-  // Markers Logic
   const calculate2DayMarkers = () => { const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0); const totalDuration = 48 * 60 * 60 * 1000; const endOfTomorrow = new Date(startOfToday.getTime() + totalDuration); let rawMarkers = []; timelineRecords.forEach(record => { const type = timelineTypes.find(t => t.id === record.typeId); if (!type) return; const intervalMs = type.interval * 60 * 1000; let checkTime = record.deathTimestamp; if (checkTime < startOfToday.getTime()) { const diff = startOfToday.getTime() - checkTime; const jumps = Math.floor(diff / intervalMs); checkTime += jumps * intervalMs; } while (checkTime <= endOfTomorrow.getTime() + intervalMs) { if (checkTime >= startOfToday.getTime() && checkTime <= endOfTomorrow.getTime()) { const current = new Date(checkTime); const offsetMs = checkTime - startOfToday.getTime(); const percent = (offsetMs / totalDuration) * 100; rawMarkers.push({ id: record.id + '_' + checkTime, percent, time: formatTimeOnly(current), color: type.color, name: type.name, originalRecordId: record.id, interval: type.interval }); } checkTime += intervalMs; } }); rawMarkers.sort((a, b) => a.percent - b.percent); const levels = [ -10, -10, -10, -10 ]; return rawMarkers.map(marker => { let assignedLevel = 0; for (let i = 0; i < levels.length; i++) { if (marker.percent > levels[i] + 1.5) { assignedLevel = i; levels[i] = marker.percent; break; } if (i === levels.length - 1) { assignedLevel = 0; levels[0] = marker.percent; } } return { ...marker, level: assignedLevel }; }); };
   const markers = calculate2DayMarkers();
   
@@ -212,15 +262,13 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
   const theme = { text: 'text-[var(--app-text)]', subText: 'opacity-60', input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' };
 
-  // 排序
   const sortedEvents = [...bossEvents].sort((a, b) => new Date(a.respawnTime) - new Date(b.respawnTime));
   const nextBoss = sortedEvents.find(e => new Date(e.respawnTime) > now);
   const formatDateSimple = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 
-  // 🟢 核心邏輯：將 Boss 依照設定檔 (Template) 的 faction 分類
   const getFaction = (templateId) => {
       const t = bossTemplates.find(t => t.id === templateId);
-      return t?.faction || 'elyos'; // 預設歸類為天族 (相容舊資料)
+      return t?.faction || 'elyos'; 
   };
 
   const elyosEvents = sortedEvents.filter(e => getFaction(e.templateId) === 'elyos');
@@ -261,7 +309,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
          </div>
       </div>
 
-      {/* Control Bar */}
+      {/* Control Bar (含推播開關) */}
       <div className="mt-4 mb-4 p-3 rounded-xl shadow-lg flex flex-wrap items-center justify-between gap-4 backdrop-blur-sm border border-white/10" style={{ background: 'var(--card-bg)' }}>
         <div className="flex items-center gap-4">
           <Clock size={32} className="opacity-80"/>
@@ -273,6 +321,23 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             <span className="text-2xl font-mono font-bold block leading-none">{formatTimeWithSeconds(now)}</span>
           </div>
         </div>
+        
+        {/* 🟢 新增：Discord 推播開關 (建議放在中間或顯眼處) */}
+        <div className="flex items-center gap-2 px-3 py-1 bg-black/20 rounded-lg border border-white/5">
+            <button 
+                onClick={() => {
+                    if (isNotifier) setIsNotifier(false);
+                    else if (window.confirm("⚠️ 注意！\n請確認團隊中「只有一人」開啟此功能，否則 Discord 會被重複訊息洗版！\n確定要開啟嗎？")) {
+                        setIsNotifier(true);
+                    }
+                }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded transition-all font-bold text-xs ${isNotifier ? 'bg-red-600 text-white shadow-[0_0_10px_red] animate-pulse' : 'bg-gray-600 text-gray-300'}`}
+            >
+                {isNotifier ? <Bell size={14}/> : <BellOff size={14}/>}
+                {isNotifier ? '推播中 (請勿關閉分頁)' : 'Discord 推播已關閉'}
+            </button>
+        </div>
+
         {nextBoss ? (
             <div className="flex items-center gap-3 bg-black/10 px-4 py-2 rounded-lg border border-white/10">
                 <span className="text-xs opacity-70 font-bold">NEXT BOSS</span>
@@ -304,7 +369,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
                 <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} />
             </div>
 
-            {/* 🟢 4. 監控清單分為兩列：天族 與 魔族 */}
+            {/* 4. 監控清單分為兩列：天族 與 魔族 */}
             <div className="col-span-1 md:col-span-3 flex flex-col md:flex-row gap-4 h-full overflow-hidden">
                 
                 {/* 天族列表 */}
@@ -365,7 +430,8 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* 🟢 修改 Create/Edit Modal：加入種族選擇 Radio */}
+      {/* Modals 略 (保持不變) */}
+      {/* ... 請保留原本的 Modals ... */}
       {isCreateBossModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-xl p-6 shadow-2xl flex flex-col max-h-[90vh]" style={{ background: 'var(--card-bg)' }}>
@@ -373,7 +439,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
             <div className="space-y-4">
                <div className="grid grid-cols-2 gap-2"><input type="text" placeholder="名稱" className={`p-2 rounded border ${theme.input}`} value={newBossForm.name} onChange={e=>setNewBossForm({...newBossForm, name: e.target.value})}/><input type="number" placeholder="週期(分)" className={`p-2 rounded border ${theme.input}`} value={newBossForm.respawnMinutes} onChange={e=>setNewBossForm({...newBossForm, respawnMinutes: parseInt(e.target.value)||0})}/></div>
                
-               {/* 🟢 種族選擇區塊 */}
                <div className="flex gap-4 p-2 bg-black/10 rounded border border-white/10">
                    <label className={`flex items-center gap-2 cursor-pointer px-3 py-1 rounded transition-colors ${newBossForm.faction === 'elyos' ? 'bg-green-500/20 text-green-400 font-bold border border-green-500/50' : 'opacity-60 hover:opacity-100'}`}>
                        <input type="radio" name="faction" value="elyos" className="hidden" checked={newBossForm.faction === 'elyos'} onChange={() => setNewBossForm({...newBossForm, faction: 'elyos'})} />
@@ -391,8 +456,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
           </div>
         </div>
       )}
-      
-      {/* 其他 Modal 保持不變 */}
       {isAddRecordModalOpen && ( <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm"> <div className="w-full max-w-sm rounded-xl p-6 shadow-2xl" style={{ background: 'var(--card-bg)' }}> <h3 className="text-lg font-bold mb-4">{editingEventId ? '修改計時時間' : '新增計時'}</h3> <div className="space-y-4"> <div><label className="text-xs opacity-70">選擇 Boss</label><select className={`w-full p-2 rounded border ${theme.input}`} value={recordForm.templateId} onChange={e=>setRecordForm({...recordForm, templateId: e.target.value})} disabled={!!editingEventId}><option value="" disabled>請選擇...</option>{bossTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div> <div className="flex gap-2 text-xs"> <button onClick={()=>setRecordForm({...recordForm, timeMode: 'current'})} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='current' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>當前時間</button> <button onClick={()=>{ const nowSynced = new Date(Date.now() + timeOffset); setRecordForm({ ...recordForm, timeMode: 'specific', specificDate: nowSynced.toISOString().split('T')[0], specificTime: `${String(nowSynced.getHours()).padStart(2,'0')}:${String(nowSynced.getMinutes()).padStart(2,'0')}` }); }} className={`flex-1 py-2 rounded border ${recordForm.timeMode==='specific' ? 'bg-blue-600 text-white' : 'opacity-50'}`}>指定時間</button> </div> {recordForm.timeMode === 'specific' && (<div className="grid grid-cols-2 gap-2"><input type="date" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificDate} onChange={e=>setRecordForm({...recordForm, specificDate: e.target.value})}/><input type="time" step="1" className={`p-2 rounded border ${theme.input}`} value={recordForm.specificTime} onChange={e=>setRecordForm({...recordForm, specificTime: e.target.value})}/></div>)} <div className="flex justify-end gap-2 mt-4"><button onClick={() => setIsAddRecordModalOpen(false)} className="px-4 py-2 bg-gray-500 text-white rounded">取消</button><button onClick={handleSaveRecord} className="px-4 py-2 bg-blue-600 text-white rounded">儲存</button></div> </div> </div> </div> )}
       {isTimelineSettingsOpen && ( <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[999]"> <div className={`w-full max-w-2xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[85vh]`} style={{ background: 'var(--card-bg)' }}> <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4"> <h3 className="font-bold text-xl flex items-center gap-2"><Settings size={20}/> 時間線設定</h3> <button onClick={()=>setIsTimelineSettingsOpen(false)}><X size={24}/></button> </div> <div className="flex gap-6 h-full overflow-hidden"> <div className="flex-1 flex flex-col border-r border-white/10 pr-6"> <h4 className="font-bold text-sm mb-3 text-orange-400">1. 設定 Boss (Timeline Types)</h4> <div className="space-y-3 mb-4"> <div className="grid grid-cols-2 gap-2"> <input type="text" placeholder="名稱" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.name} onChange={e=>setTimelineTypeForm({...timelineTypeForm, name: e.target.value})}/> <input type="number" placeholder="CD(分)" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.interval} onChange={e=>setTimelineTypeForm({...timelineTypeForm, interval: Number(e.target.value)})}/> </div> <div className="flex gap-2"> <input type="color" className="h-9 w-full rounded cursor-pointer" value={timelineTypeForm.color} onChange={e=>setTimelineTypeForm({...timelineTypeForm, color: e.target.value})}/> <button onClick={handleAddTimelineType} disabled={isSubmitting} className="whitespace-nowrap px-4 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-500">新增</button> </div> </div> <div className="flex-1 overflow-y-auto space-y-1"> {timelineTypes.map(t => ( <div key={t.id} className="flex justify-between items-center text-xs p-2 rounded bg-black/20 hover:bg-black/30"> <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor: t.color}}></div><span>{t.name} ({t.interval}m)</span></div> <button onClick={()=>handleDeleteTimelineType(t.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14}/></button> </div> ))} </div> </div> <div className="flex-1 flex flex-col"> <h4 className="font-bold text-sm mb-3 text-blue-400">2. 設定重生時間</h4> <div className="space-y-3"> <select className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.typeId} onChange={e=>setTimelineRecordForm({...timelineRecordForm, typeId: e.target.value})}> <option value="">選擇 Boss...</option> {timelineTypes.map(t => <option key={t.id} value={t.id} style={{color: 'black'}}>{t.name}</option>)} </select> <div className="grid grid-cols-2 gap-2"> <input type="date" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathDate} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathDate: e.target.value})}/> <input type="time" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathTime} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathTime: e.target.value})}/> </div> <button onClick={handleAddTimelineRecord} disabled={isSubmitting} className="w-full py-2 bg-orange-600 text-white rounded font-bold hover:bg-orange-500 flex justify-center gap-2"> {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : '開始追蹤'} </button> </div> <div className="mt-auto pt-4 text-xs opacity-50">* 此時間線與下方列表獨立運作，用於特定週期監控。</div> </div> </div> </div> </div> )}
     </div>

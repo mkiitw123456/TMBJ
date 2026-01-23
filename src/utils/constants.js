@@ -1,6 +1,6 @@
 // src/utils/constants.js
 
-export const APP_VERSION = "0122v2";
+export const APP_VERSION = "0123v1";
 
 // Discord Webhook URL (若不需要可留空)
 export const DISCORD_NOTIFY_WEBHOOK_URL = "https://discord.com/api/webhooks/1450050856094535745/0dvodClTjDzQEc_t5z_cCXNjPTF2wCyilpcWtJJNyX0xGhp4lYcRYOgzOam1IWT9Zqgo"; 
