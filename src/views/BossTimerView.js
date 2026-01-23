@@ -1,13 +1,13 @@
 // src/views/BossTimerView.js
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Clock, Plus, Tag, RefreshCw, Star, X, Trash2, Edit3, List, Settings, Loader2, Globe, Shield, Swords, Bell, BellOff
+  Clock, Plus, Tag, RefreshCw, X, Trash2, Edit3, List, Settings, Loader2, Globe, Shield, Swords, Bell, BellOff
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
 // 🟢 引入 sendBossNotify
 import { 
-  formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog, sendNotify, sendBossNotify
+  formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog, sendBossNotify
 } from '../utils/helpers';
 import ToastNotification from '../components/ToastNotification';
 import EventItem from '../components/EventItem';
