@@ -5,8 +5,9 @@ import {
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
+// 🟢 引入 sendBossNotify
 import { 
-  formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog, sendNotify 
+  formatTimeWithSeconds, formatTimeOnly, getRandomBrightColor, sendLog, sendNotify, sendBossNotify
 } from '../utils/helpers';
 import ToastNotification from '../components/ToastNotification';
 import EventItem from '../components/EventItem';
@@ -25,9 +26,8 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
   const [timeOffset, setTimeOffset] = useState(0); 
   const [isTimeSynced, setIsTimeSynced] = useState(false);
 
-  // 🟢 新增：推播控制狀態
+  // 推播控制狀態
   const [isNotifier, setIsNotifier] = useState(false);
-  // 用 ref 紀錄已經通知過的事件與秒數，避免重複發送 { eventId: { 60: true, 30: true... } }
   const notifiedRef = useRef({}); 
 
   const [toastMsg, setToastMsg] = useState(null); 
@@ -82,22 +82,19 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
     syncTime();
   }, []);
 
-  // 🟢 核心計時器與推播邏輯
+  // 🟢 核心計時器與推播邏輯 (修改這裡)
   useEffect(() => {
     const timer = setInterval(() => {
         const currentTime = new Date(Date.now() + timeOffset);
         setNow(currentTime);
 
-        // 如果開啟了推播模式，檢查是否有 Boss 即將重生
         if (isNotifier) {
             bossEvents.forEach(event => {
                 const respawnTime = new Date(event.respawnTime).getTime();
                 const diffMs = respawnTime - currentTime.getTime();
                 const diffSeconds = Math.floor(diffMs / 1000);
 
-                // 只監控未來 1 分鐘內的事件，且不要監控已經過期的
                 if (diffSeconds <= 60 && diffSeconds > 0) {
-                    // 初始化該 event 的紀錄
                     if (!notifiedRef.current[event.id]) {
                         notifiedRef.current[event.id] = {};
                     }
@@ -105,19 +102,17 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
                     const checkPoints = [60, 30, 10, 5, 4, 3, 2, 1];
                     
                     if (checkPoints.includes(diffSeconds)) {
-                        // 如果這個秒數還沒通知過
                         if (!notifiedRef.current[event.id][diffSeconds]) {
-                            // 標記為已通知
                             notifiedRef.current[event.id][diffSeconds] = true;
                             
-                            // 發送通知
                             let msg = '';
                             if (diffSeconds === 60) msg = `⚠️ **[注意]** ${event.name} 將在 **1分鐘** 後重生！`;
                             else if (diffSeconds === 30) msg = `⏳ **[倒數]** ${event.name} 還有 **30秒**！`;
                             else if (diffSeconds === 10) msg = `🔥 **[準備]** ${event.name} 還有 **10秒**！`;
                             else msg = `⏰ **${event.name}** 倒數: **${diffSeconds}**`;
 
-                            sendNotify(msg);
+                            // 🟢 改用 sendBossNotify
+                            sendBossNotify(msg);
                             console.log(`[Notifier] Sent: ${msg}`);
                         }
                     }
@@ -126,7 +121,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         }
     }, 1000); 
     return () => clearInterval(timer);
-  }, [timeOffset, isNotifier, bossEvents]); // 加入依賴
+  }, [timeOffset, isNotifier, bossEvents]); 
 
   const showToast = (message) => { setToastMsg(message); setTimeout(() => setToastMsg(null), 2000); };
 
@@ -148,7 +143,6 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         await updateDoc(doc(db, "boss_events", event.id), { deathTime: baseTime.toISOString(), respawnTime: newRespawnTime.toISOString() }); 
         sendLog(currentUser, "快速刷新", `${event.name}`); 
         showToast(`🔄 已刷新：${event.name}`); 
-        // 刷新後清除該 Event 的通知紀錄，讓下次可以再通知
         if (notifiedRef.current[event.id]) delete notifiedRef.current[event.id];
     } catch(e) { alert("刷新失敗"); }
   };
@@ -322,7 +316,7 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
           </div>
         </div>
         
-        {/* 🟢 新增：Discord 推播開關 (建議放在中間或顯眼處) */}
+        {/* Discord 推播開關 */}
         <div className="flex items-center gap-2 px-3 py-1 bg-black/20 rounded-lg border border-white/5">
             <button 
                 onClick={() => {
@@ -430,8 +424,8 @@ const BossTimerView = ({ isDarkMode, currentUser }) => {
         </div>
       </div>
 
-      {/* Modals 略 (保持不變) */}
-      {/* ... 請保留原本的 Modals ... */}
+      {/* Modals 保持不變 (略，因篇幅限制，請保留您原本的 Modals) */}
+      {/* ... 請保留原本的 Modals，例如 isCreateBossModalOpen, isAddRecordModalOpen 等 ... */}
       {isCreateBossModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-xl p-6 shadow-2xl flex flex-col max-h-[90vh]" style={{ background: 'var(--card-bg)' }}>

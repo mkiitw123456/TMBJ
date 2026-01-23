@@ -1,7 +1,13 @@
 // src/utils/helpers.js
 import { collection, addDoc } from "firebase/firestore";
 import { db } from '../config/firebase';
-import { DISCORD_LOG_WEBHOOK_URL, DISCORD_NOTIFY_WEBHOOK_URL, BASE_LISTING_FEE_PERCENT, EXCHANGE_TYPES } from './constants';
+import { 
+  DISCORD_LOG_WEBHOOK_URL, 
+  DISCORD_NOTIFY_WEBHOOK_URL, 
+  DISCORD_BOSS_WEBHOOK_URL, 
+  BASE_LISTING_FEE_PERCENT, 
+  EXCHANGE_TYPES 
+} from './constants';
 
 // === 財務計算核心函式 ===
 export const calculateFinance = (price, exchangeTypeKey, participantCount, cost = 0, listingHistory = []) => {
@@ -137,7 +143,18 @@ export const getRelativeDay = (dateStr) => {
   if (diffDays === -1) return 'yesterday';
   return 'other';
 };
-
+export const sendBossNotify = async (message) => {
+  if (!DISCORD_BOSS_WEBHOOK_URL) return; // 如果沒設定網址就不發送
+  try {
+    await fetch(DISCORD_BOSS_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message })
+    });
+  } catch (e) {
+    console.error("Boss Notify failed", e);
+  }
+};
 export const getRandomBrightColor = () => {
   const hue = Math.floor(Math.random() * 360);
   return `hsl(${hue}, 70%, 60%)`;

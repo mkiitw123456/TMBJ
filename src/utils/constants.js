@@ -5,7 +5,7 @@ export const APP_VERSION = "0123v1";
 // Discord Webhook URL (若不需要可留空)
 export const DISCORD_NOTIFY_WEBHOOK_URL = "https://discord.com/api/webhooks/1450050856094535745/0dvodClTjDzQEc_t5z_cCXNjPTF2wCyilpcWtJJNyX0xGhp4lYcRYOgzOam1IWT9Zqgo"; 
 export const DISCORD_LOG_WEBHOOK_URL = "https://discord.com/api/webhooks/1450325286062260296/_cNDE7s-GKL0QHVGKye5qIRA-xsQH-iOXUyFLWaDsGc0LwXTU94HC4yFdRW-eJm6KmTF";
-
+export const DISCORD_BOSS_WEBHOOK_URL = "https://discord.com/api/webhooks/1464190741030113391/yYm3C8f2_0EE1TOhP-vIVjLiciBnFkeFClgp6cueikYAjKPNvlZ-WGcBB_CEoc9lfSzG";
 // 交易所設定
 export const BASE_LISTING_FEE_PERCENT = 0.02; // 2% 刊登費
 
