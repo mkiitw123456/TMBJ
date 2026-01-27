@@ -26,7 +26,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [activeItems, setActiveItems] = useState([]);
   const [historyItems, setHistoryItems] = useState([]);
   
-  // 篩選狀態：'all' (全部) 或 'mine' (我的)
   const [filterMode, setFilterMode] = useState('all'); 
 
   // Modals & UI States
@@ -38,11 +37,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [confirmSettleId, setConfirmSettleId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  // Filter States for History
   const [historyFilterMember, setHistoryFilterMember] = useState('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
-  // Form Data
   const [formData, setFormData] = useState({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
 
   const filteredMembers = useMemo(() => {
@@ -55,13 +52,11 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   useEffect(() => {
     if (!db) return;
     
-    // 進行中項目
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
     const unsubActive = onSnapshot(qActive, (snap) => setActiveItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
 
     let unsubHistory = () => {};
 
-    // 只有 Wolf 才去讀取歷史紀錄 (節省流量)
     if (currentUser === 'Wolf') {
         const qHistory = query(
             collection(db, "history_items"), 
@@ -76,9 +71,20 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return () => { unsubActive(); unsubHistory(); };
   }, [currentUser]);
 
-  useEffect(() => { if (isModalOpen) setFormData(prev => ({ ...prev, seller: currentUser })); }, [isModalOpen, currentUser]);
+  // 🟢 修正：當 Modal 開啟時，重置表單並「全選」參與者
+  useEffect(() => { 
+    if (isModalOpen) {
+        setFormData({ 
+            itemName: '', 
+            price: '', 
+            cost: 0, 
+            seller: currentUser, 
+            participants: memberNames, // 預設帶入所有成員 (全選)
+            exchangeType: 'WORLD' 
+        });
+    }
+  }, [isModalOpen, currentUser, memberNames]);
 
-  // 計算目前要顯示的項目 (過濾邏輯)
   const displayedActiveItems = useMemo(() => {
     if (filterMode === 'mine') {
       return activeItems.filter(item => item.seller === currentUser);
@@ -93,7 +99,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       const newItem = { ...formData, price: parseNumber(formData.price), cost: parseNumber(formData.cost), createdAt: new Date().toISOString(), listingHistory: [parseNumber(formData.price)] };
       await addDoc(collection(db, "active_items"), newItem);
       setIsModalOpen(false);
-      setFormData({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
+      // 成功後重置表單 (雖然 useEffect 也會處理，但雙重保險)
+      setFormData({ itemName: '', price: '', cost: 0, seller: currentUser, participants: memberNames, exchangeType: 'WORLD' });
       sendLog(currentUser, "新增記帳", `${formData.itemName} ($${formData.price})`);
       sendNotify(`📦 **${currentUser}** 新增掛賣：${formData.itemName} (售價: ${formData.price})`);
     } catch (e) { alert("新增失敗"); }
@@ -175,7 +182,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       return sum + (item.finalSplit || 0);
   }, 0);
 
-  // 🟢 修正 Theme：改回明確的顏色，解決透明背景問題
   const theme = { 
       card: isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200', 
       text: isDarkMode ? 'text-gray-100' : 'text-gray-800', 
@@ -183,7 +189,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-gray-50 border-gray-200 text-gray-800' 
   };
 
-  // 🟢 修正背景色：使用明確的顏色值，而非變數
   const mainBgClass = isDarkMode ? 'text-gray-100' : 'text-gray-900';
 
   return (
@@ -229,8 +234,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             </div>
         </div>
 
-        {/* 🟢 修正 Grid：移除 xl:grid-cols-3，回復成原本最多 2 欄 */}
-          <div className="grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 gap-6">
           {displayedActiveItems.map(item => (
             <ItemCard 
                 key={item.id} 
@@ -254,10 +258,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* History Modal - 🟢 修正背景色，解決透明問題 */}
+      {/* History Modal */}
       {isHistoryOpen && currentUser === 'Wolf' && (
         <div className={`fixed inset-0 z-50 flex flex-col ${isDarkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-            {/* Header */}
             <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-black/20 shrink-0">
               <h3 className={`text-xl font-bold flex items-center gap-2 ${theme.text}`}>
                   <History/> 歷史紀錄 (最近50筆)
@@ -270,7 +273,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
               </button>
             </div>
             
-            {/* Filter Bar */}
             <div className="p-4 border-b border-gray-700 flex flex-wrap gap-4 items-end bg-black/10 shrink-0">
                 <div className="flex flex-col gap-1">
                     <label className="text-xs opacity-70">篩選成員</label>
@@ -294,10 +296,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 )}
             </div>
 
-            {/* List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                {/* 🟢 修正 History Grid：同樣限制最多 2 欄 */}
-                <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="max-w-7xl mx-auto grid grid-cols-1 gap-6">
                     {filteredHistory.map(item => (
                         <ItemCard key={item.id} item={item} isHistory={true} theme={theme} handleDelete={handleDelete} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser}/>
                     ))}
