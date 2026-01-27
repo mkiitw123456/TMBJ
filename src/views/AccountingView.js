@@ -1,9 +1,9 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, History, Grid, Calculator, X, User, Users} from 'lucide-react';
+import { Plus, History, Grid, Calculator, X, User, Users } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit } from "firebase/firestore";
 import { db } from '../config/firebase';
-import { sendLog, sendNotify} from '../utils/helpers';
+import { sendLog, sendNotify } from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
@@ -33,8 +33,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
-  
-  // 🟢 修正變數名稱：統一使用 isCostCalcOpen
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
   const [confirmSettleId, setConfirmSettleId] = useState(null);
@@ -47,7 +45,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   // Form Data
   const [formData, setFormData] = useState({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
 
-  // 🟢 補回 filteredMembers 定義
   const filteredMembers = useMemo(() => {
     return members.filter(m => m.hideFromAccounting !== true);
   }, [members]);
@@ -116,7 +113,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     } catch (e) { alert("刪除失敗"); }
   };
 
-  // 🟢 修正 perPersonSplit 未定義的問題 (參數是 perPersonAmount)
   const handleSettleAll = async (item, perPersonAmount) => {
     if (currentUser === '訪客') return alert("訪客權限不足");
     const safeParticipants = Array.isArray(item.participants) ? item.participants : [];
@@ -152,7 +148,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       });
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
-      // 🟢 這裡原本寫錯變數，已修正為 perPersonAmount
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
     } catch (e) { console.error(e); alert(`結算失敗: ${e.message}`); }
   };
@@ -177,20 +172,22 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   });
 
   const historyTotalSplit = filteredHistory.reduce((sum, item) => {
-      // 這裡需要 calculateFinance 但它不在 import 裡，不過如果這段邏輯不需要顯示詳細計算，可以用 finalSplit
-      // 為了避免 no-undef，如果 historyItems 裡有 finalSplit 欄位，直接用它
       return sum + (item.finalSplit || 0);
   }, 0);
 
+  // 🟢 修正 Theme：改回明確的顏色，解決透明背景問題
   const theme = { 
-      text: 'var(--app-text)', 
-      subText: 'opacity-60', 
-      card: 'var(--card-bg)', 
-      input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' 
+      card: isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200', 
+      text: isDarkMode ? 'text-gray-100' : 'text-gray-800', 
+      subText: isDarkMode ? 'text-gray-400' : 'text-gray-500', 
+      input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-gray-50 border-gray-200 text-gray-800' 
   };
 
+  // 🟢 修正背景色：使用明確的顏色值，而非變數
+  const mainBgClass = isDarkMode ? 'text-gray-100' : 'text-gray-900';
+
   return (
-    <div className="p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative" style={{ color: 'var(--app-text)' }}>
+    <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative ${mainBgClass}`}>
       {/* Header Buttons */}
       <div className="flex flex-wrap gap-3 mb-6">
         <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
@@ -206,7 +203,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             </button>
         )}
 
-        {/* 🟢 修正 CostCalculatorModal 的開關狀態變數名稱 */}
         <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
             <Calculator size={20}/> 計算機
         </button>
@@ -233,7 +229,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {/* 🟢 修正 Grid：移除 xl:grid-cols-3，回復成原本最多 2 欄 */}
+          <div className="grid grid-cols-1 gap-6">
           {displayedActiveItems.map(item => (
             <ItemCard 
                 key={item.id} 
@@ -257,22 +254,23 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* History Modal */}
+      {/* History Modal - 🟢 修正背景色，解決透明問題 */}
       {isHistoryOpen && currentUser === 'Wolf' && (
-        <div className="fixed inset-0 z-50 flex flex-col" style={{ background: 'var(--app-bg)' }}>
+        <div className={`fixed inset-0 z-50 flex flex-col ${isDarkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
+            {/* Header */}
             <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-black/20 shrink-0">
-              <h3 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--app-text)' }}>
+              <h3 className={`text-xl font-bold flex items-center gap-2 ${theme.text}`}>
                   <History/> 歷史紀錄 (最近50筆)
               </h3>
               <button 
                   onClick={() => setIsHistoryOpen(false)}
-                  className="p-2 rounded-full hover:bg-white/10 transition-colors"
-                  style={{ color: 'var(--app-text)' }}
+                  className={`p-2 rounded-full hover:bg-white/10 transition-colors ${theme.text}`}
               >
                   <X size={24}/>
               </button>
             </div>
             
+            {/* Filter Bar */}
             <div className="p-4 border-b border-gray-700 flex flex-wrap gap-4 items-end bg-black/10 shrink-0">
                 <div className="flex flex-col gap-1">
                     <label className="text-xs opacity-70">篩選成員</label>
@@ -296,8 +294,10 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 )}
             </div>
 
+            {/* List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                {/* 🟢 修正 History Grid：同樣限制最多 2 欄 */}
+                <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
                     {filteredHistory.map(item => (
                         <ItemCard key={item.id} item={item} isHistory={true} theme={theme} handleDelete={handleDelete} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser}/>
                     ))}
@@ -312,16 +312,16 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-lg rounded-2xl p-6 shadow-2xl ${theme.card}`}>
             <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold">新增記帳</h3>
-                <button onClick={() => setIsModalOpen(false)}><X/></button>
+                <h3 className={`text-xl font-bold ${theme.text}`}>新增記帳</h3>
+                <button onClick={() => setIsModalOpen(false)} className={theme.text}><X/></button>
             </div>
             <div className="space-y-4 mb-6">
-                <div><label className={`text-xs ${theme.subText}`}>物品名稱</label><input type="text" className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="例如: 伸缩大劍" value={formData.itemName} onChange={e => setFormData({...formData, itemName: e.target.value})}/></div>
+                <div><label className={`block text-xs mb-1 ${theme.subText}`}>物品名稱</label><input type="text" className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="例如: 伸缩大劍" value={formData.itemName} onChange={e => setFormData({...formData, itemName: e.target.value})}/></div>
                 <div className="grid grid-cols-2 gap-4">
-                    <div><label className={`text-xs ${theme.subText}`}>售價 (含稅)</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.price} onChange={val => setFormData({...formData, price: val})}/></div>
-                    <div><label className={`text-xs ${theme.subText}`}>額外成本</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.cost} onChange={val => setFormData({...formData, cost: val})}/></div>
+                    <div><label className={`block text-xs mb-1 ${theme.subText}`}>售價 (含稅)</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.price} onChange={val => setFormData({...formData, price: val})}/></div>
+                    <div><label className={`block text-xs mb-1 ${theme.subText}`}>額外成本</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.cost} onChange={val => setFormData({...formData, cost: val})}/></div>
                 </div>
-                <div><label className={`text-xs ${theme.subText}`}>交易所類型</label><select className={`w-full p-3 rounded-lg border ${theme.input}`} value={formData.exchangeType} onChange={e => setFormData({...formData, exchangeType: e.target.value})}>{Object.entries(EXCHANGE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
+                <div><label className={`block text-xs mb-1 ${theme.subText}`}>交易所類型</label><select className={`w-full p-3 rounded-lg border ${theme.input}`} value={formData.exchangeType} onChange={e => setFormData({...formData, exchangeType: e.target.value})}>{Object.entries(EXCHANGE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
             </div>
             <div className="mb-6"><div className="flex justify-between items-center mb-2"><label className={`text-xs ${theme.subText}`}>分紅參與者</label><button onClick={() => setFormData({...formData, participants: []})} className="text-xs text-blue-500 hover:underline">清空</button></div><div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">{memberNames.map(m => (<button key={m} onClick={() => toggleParticipantInForm(m)} className={`px-3 py-1 rounded-full text-xs border ${formData.participants.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-500 text-gray-500'}`}>{m}</button>))}</div></div>
             <div className="flex gap-3"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button><button onClick={handleAddItem} className="flex-1 py-3 bg-blue-600 rounded-lg text-white font-bold">建立項目</button></div>
@@ -329,7 +329,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 🟢 修正 BalanceGrid 與 CostCalculatorModal 的 props */}
       <BalanceGrid isOpen={isBalanceGridOpen} onClose={() => setIsBalanceGridOpen(false)} theme={theme} isDarkMode={isDarkMode} currentUser={currentUser} members={filteredMembers} activeItems={activeItems} />
       <CostCalculatorModal isOpen={isCostCalcOpen} onClose={() => setIsCostCalcOpen(false)} theme={theme} isDarkMode={isDarkMode} />
     </div>
