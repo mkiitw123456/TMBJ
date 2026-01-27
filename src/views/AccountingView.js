@@ -1,6 +1,6 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, History, Grid, Calculator, X, User } from 'lucide-react';
+import { Plus, History, Grid, Calculator, X, User, Users } from 'lucide-react'; // 🟢 新增 User, Users 圖示
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { sendLog, sendNotify, calculateFinance } from '../utils/helpers';
@@ -29,17 +29,16 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
-  // ✅ 修正 1：補齊刪除與結算的確認狀態，解決 ItemCard 報錯
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmSettleId, setConfirmSettleId] = useState(null);
 
-  // 過濾掉被標記為 "hideFromAccounting" 的成員
-// ✅ 修正：先產生一個「過濾後的成員物件列表」
+  // 🟢 1. 新增篩選狀態: 'all' (全部) 或 'mine' (我的)
+  const [filterMode, setFilterMode] = useState('all');
+
   const filteredMembers = useMemo(() => {
     return members.filter(m => m.hideFromAccounting !== true);
   }, [members]);
 
-  // 再從上面那個過濾後的列表，取出名字給下拉選單用
   const memberNames = useMemo(() => {
     return filteredMembers.map(m => m.name || m);
   }, [filteredMembers]);
@@ -62,7 +61,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     const qItems = query(collection(db, "active_items"));
     const unsubItems = onSnapshot(qItems, (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // 修正排序：最新刊登的排在上面
       list.sort((a, b) => {
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
@@ -75,6 +73,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     const unsubHistory = onSnapshot(qHistory, (snap) => setHistoryItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
     return () => { unsubItems(); unsubHistory(); };
   }, []);
+
+  // 🟢 2. 計算目前要顯示的進行中項目 (過濾邏輯)
+  const displayedActiveItems = useMemo(() => {
+    if (filterMode === 'mine') {
+        return items.filter(item => item.seller === currentUser);
+    }
+    return items;
+  }, [items, filterMode, currentUser]);
 
   const filteredHistory = useMemo(() => {
     return historyItems.filter(item => {
@@ -129,11 +135,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const updateItemValue = async (id, field, value) => { if(currentUser !== '訪客') await updateDoc(doc(db, "active_items", id), { [field]: value }); };
   
-  // ✅ 修正 2：改良版刪除函式 (解決未知項目 & 歷史無法刪除問題)
   const handleDelete = async (id, isHistory, itemName) => { 
       if (currentUser === '訪客') return alert("訪客權限僅供瀏覽");
       
-      // 1. 先把名字抓出來 (防呆)
       let finalItemName = itemName;
       if (!finalItemName) {
           const sourceList = isHistory ? historyItems : items;
@@ -141,14 +145,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           if (foundItem) finalItemName = foundItem.itemName;
       }
 
-      // 2. 樂觀更新 (先從畫面移除，讓使用者感覺立刻刪掉了)
       if (isHistory) {
           setHistoryItems(prev => prev.filter(item => item.id !== id));
       } else {
           setItems(prev => prev.filter(item => item.id !== id));
       }
 
-      // 3. 執行資料庫刪除 & 發送通知
       try {
           const colName = isHistory ? "history_items" : "active_items";
           await deleteDoc(doc(db, colName, id));
@@ -185,8 +187,35 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto h-full flex flex-col">
+      {/* 標題與功能按鈕列 */}
       <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
-        <h2 className={`text-xl font-bold border-l-4 pl-3 ${showHistory ? 'border-gray-500' : 'border-blue-500'} ${theme.text}`}>{showHistory ? `歷史紀錄 (${filteredHistory.length})` : `進行中項目 (${items.length})`}</h2>
+        
+        {/* 🟢 3. 標題區域：包含標題與篩選切換按鈕 */}
+        <div className="flex items-center gap-4">
+            <h2 className={`text-xl font-bold border-l-4 pl-3 ${showHistory ? 'border-gray-500' : 'border-blue-500'} ${theme.text}`}>
+                {showHistory ? `歷史紀錄 (${filteredHistory.length})` : `進行中項目 (${displayedActiveItems.length})`}
+            </h2>
+
+            {/* 只有在「不是歷史紀錄」時才顯示這個切換按鈕 */}
+            {!showHistory && (
+                <div className={`flex p-1 rounded-lg border ${isDarkMode ? 'bg-black/30 border-white/10' : 'bg-gray-100 border-gray-300'}`}>
+                    <button 
+                        onClick={() => setFilterMode('all')}
+                        className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                    >
+                        <Users size={14}/> 全部
+                    </button>
+                    <button 
+                        onClick={() => setFilterMode('mine')}
+                        className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                    >
+                        <User size={14}/> 我的
+                    </button>
+                </div>
+            )}
+        </div>
+
+        {/* 右側功能按鈕 (保持原樣) */}
         <div className="flex gap-2">
           <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 px-3 py-2 rounded text-white shadow bg-orange-500"><Calculator size={18}/> 成本試算</button>
           <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 px-3 py-2 rounded text-white shadow bg-purple-600"><Grid size={18}/> 餘額表</button>
@@ -254,10 +283,13 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       )}
 
       <div className="flex-1 overflow-y-auto pb-20 flex flex-col gap-4 content-start">
-        {(showHistory ? filteredHistory : items).length === 0 && (
-            <div className={`text-center py-20 ${theme.subText} opacity-50`}>沒有符合條件的資料</div>
+        {/* 🟢 4. 使用過濾後的 displayedActiveItems 進行顯示 */}
+        {(showHistory ? filteredHistory : displayedActiveItems).length === 0 && (
+            <div className={`text-center py-20 ${theme.subText} opacity-50`}>
+                {filterMode === 'mine' && !showHistory ? '您目前沒有掛賣項目' : '沒有符合條件的資料'}
+            </div>
         )}
-        {(showHistory ? filteredHistory : items).map(item => (
+        {(showHistory ? filteredHistory : displayedActiveItems).map(item => (
             <ItemCard 
                 key={item.id} 
                 item={item} 
@@ -267,7 +299,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 handleDelete={handleDelete} 
                 currentUser={currentUser} 
                 members={memberNames} 
-                // ✅ 關鍵：把兩個確認狀態都傳進去
                 confirmDeleteId={confirmDeleteId}
                 setConfirmDeleteId={setConfirmDeleteId}
                 confirmSettleId={confirmSettleId}
