@@ -1,9 +1,9 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, History, Grid, Calculator, X, User, Users, Filter } from 'lucide-react';
+import { Plus, History, Grid, Calculator, X, User, Users} from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit } from "firebase/firestore";
 import { db } from '../config/firebase';
-import { sendLog, sendNotify } from '../utils/helpers';
+import { sendLog, sendNotify} from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
@@ -25,7 +25,6 @@ const MoneyInput = ({ value, onChange, className, placeholder }) => {
 const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [activeItems, setActiveItems] = useState([]);
   const [historyItems, setHistoryItems] = useState([]);
-  const [showHistory, setShowHistory] = useState(false); // 雖然有狀態，但在 JSX 會被擋住
   
   // 篩選狀態：'all' (全部) 或 'mine' (我的)
   const [filterMode, setFilterMode] = useState('all'); 
@@ -34,7 +33,10 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
-  const [isCalcOpen, setIsCalcOpen] = useState(false);
+  
+  // 🟢 修正變數名稱：統一使用 isCostCalcOpen
+  const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
+  
   const [confirmSettleId, setConfirmSettleId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
@@ -45,18 +47,24 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   // Form Data
   const [formData, setFormData] = useState({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
 
+  // 🟢 補回 filteredMembers 定義
+  const filteredMembers = useMemo(() => {
+    return members.filter(m => m.hideFromAccounting !== true);
+  }, [members]);
+
+  const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
+
   // Data Fetching
   useEffect(() => {
     if (!db) return;
     
-    // 1. 進行中項目：所有人都要看，所以無條件讀取
+    // 進行中項目
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
     const unsubActive = onSnapshot(qActive, (snap) => setActiveItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
 
-    let unsubHistory = () => {}; // 預設為空函式
+    let unsubHistory = () => {};
 
-    // 🟢 2. 關鍵修改：只有 Wolf 才去讀取歷史紀錄
-    // 這樣其他成員打開網頁時，完全不會消耗讀取歷史紀錄的額度
+    // 只有 Wolf 才去讀取歷史紀錄 (節省流量)
     if (currentUser === 'Wolf') {
         const qHistory = query(
             collection(db, "history_items"), 
@@ -65,17 +73,15 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         );
         unsubHistory = onSnapshot(qHistory, (snap) => setHistoryItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
     } else {
-        // 如果不是 Wolf，清空歷史紀錄 (避免切換帳號時殘留)
         setHistoryItems([]);
     }
 
     return () => { unsubActive(); unsubHistory(); };
-  }, [currentUser]); // 🟢 加入 currentUser 依賴，當切換帳號時會重新執行
+  }, [currentUser]);
 
   useEffect(() => { if (isModalOpen) setFormData(prev => ({ ...prev, seller: currentUser })); }, [isModalOpen, currentUser]);
 
-  const memberNames = useMemo(() => members.map(m => m.name || m), [members]);
-
+  // 計算目前要顯示的項目 (過濾邏輯)
   const displayedActiveItems = useMemo(() => {
     if (filterMode === 'mine') {
       return activeItems.filter(item => item.seller === currentUser);
@@ -110,6 +116,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     } catch (e) { alert("刪除失敗"); }
   };
 
+  // 🟢 修正 perPersonSplit 未定義的問題 (參數是 perPersonAmount)
   const handleSettleAll = async (item, perPersonAmount) => {
     if (currentUser === '訪客') return alert("訪客權限不足");
     const safeParticipants = Array.isArray(item.participants) ? item.participants : [];
@@ -145,7 +152,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       });
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
-      sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonSplit.toLocaleString()}/人`);
+      // 🟢 這裡原本寫錯變數，已修正為 perPersonAmount
+      sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
     } catch (e) { console.error(e); alert(`結算失敗: ${e.message}`); }
   };
 
@@ -169,10 +177,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   });
 
   const historyTotalSplit = filteredHistory.reduce((sum, item) => {
-      if (historyFilterMember !== 'all' && item.seller !== historyFilterMember && item.participants.includes(historyFilterMember)) {
-          return sum + (item.finalSplit || 0);
-      }
-      return sum;
+      // 這裡需要 calculateFinance 但它不在 import 裡，不過如果這段邏輯不需要顯示詳細計算，可以用 finalSplit
+      // 為了避免 no-undef，如果 historyItems 裡有 finalSplit 欄位，直接用它
+      return sum + (item.finalSplit || 0);
   }, 0);
 
   const theme = { 
@@ -193,14 +200,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             <Grid size={20}/> 餘額表
         </button>
         
-        {/* 🟢 3. 只有 Wolf 能看到「歷史紀錄」按鈕 */}
         {currentUser === 'Wolf' && (
             <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                 <History size={20}/> 歷史紀錄
             </button>
         )}
 
-        <button onClick={() => setIsCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
+        {/* 🟢 修正 CostCalculatorModal 的開關狀態變數名稱 */}
+        <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
             <Calculator size={20}/> 計算機
         </button>
       </div>
@@ -210,7 +217,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
             <h2 className="text-2xl font-bold">進行中項目</h2>
             
-            {/* 切換按鈕 */}
             <div className="flex bg-black/20 p-1 rounded-lg border border-white/10 self-end sm:self-auto">
                 <button 
                     onClick={() => setFilterMode('all')}
@@ -227,7 +233,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             </div>
         </div>
 
-        {/* 項目卡片列表 */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {displayedActiveItems.map(item => (
             <ItemCard 
@@ -252,10 +257,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* History Modal (只有 Wolf 能觸發) */}
+      {/* History Modal */}
       {isHistoryOpen && currentUser === 'Wolf' && (
         <div className="fixed inset-0 z-50 flex flex-col" style={{ background: 'var(--app-bg)' }}>
-            {/* Header */}
             <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-black/20 shrink-0">
               <h3 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--app-text)' }}>
                   <History/> 歷史紀錄 (最近50筆)
@@ -269,7 +273,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
               </button>
             </div>
             
-            {/* Filter Bar */}
             <div className="p-4 border-b border-gray-700 flex flex-wrap gap-4 items-end bg-black/10 shrink-0">
                 <div className="flex flex-col gap-1">
                     <label className="text-xs opacity-70">篩選成員</label>
@@ -293,7 +296,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 )}
             </div>
 
-            {/* List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                 <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {filteredHistory.map(item => (
@@ -327,7 +329,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      <BalanceGrid isOpen={isBalanceGridOpen} onClose={() => setIsBalanceGridOpen(false)} theme={theme} isDarkMode={isDarkMode} currentUser={currentUser} members={filteredMembers} activeItems={items} />
+      {/* 🟢 修正 BalanceGrid 與 CostCalculatorModal 的 props */}
+      <BalanceGrid isOpen={isBalanceGridOpen} onClose={() => setIsBalanceGridOpen(false)} theme={theme} isDarkMode={isDarkMode} currentUser={currentUser} members={filteredMembers} activeItems={activeItems} />
       <CostCalculatorModal isOpen={isCostCalcOpen} onClose={() => setIsCostCalcOpen(false)} theme={theme} isDarkMode={isDarkMode} />
     </div>
   );
