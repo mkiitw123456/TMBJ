@@ -27,7 +27,7 @@ export const calculateFinance = (price, exchangeTypeKey, participantCount, cost 
   const totalListingFee = Math.round(rawListingFee);
 
   // 3. 原始淨利
-  //const rawNetIncome = p - tax - totalListingFee - c;
+  const rawNetIncome = p - tax - totalListingFee - c;
 
   // 4. 萬位截斷邏輯
   let accountingNetIncome = 0;
