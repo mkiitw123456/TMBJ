@@ -5,7 +5,7 @@ import {
   DISCORD_LOG_WEBHOOK_URL, 
   DISCORD_NOTIFY_WEBHOOK_URL, 
   DISCORD_BOSS_WEBHOOK_URL, 
-  DISCORD_HISTORY_WEBHOOK_URL, // 🟢 引入新網址
+  DISCORD_HISTORY_WEBHOOK_URL, 
   BASE_LISTING_FEE_PERCENT, 
   EXCHANGE_TYPES 
 } from './constants';
@@ -20,7 +20,6 @@ export const calculateFinance = (price, exchangeTypeKey, participantCount, cost 
   const tax = p * type.tax;
 
   // 2. 刊登費總計
-  // 如果 listingHistory 是空的，預設至少有一次當前價格的刊登費
   const history = (Array.isArray(listingHistory) && listingHistory.length > 0) ? listingHistory : [p];
   
   const rawListingFee = history.reduce((sum, val) => sum + (val * BASE_LISTING_FEE_PERCENT), 0);
@@ -109,12 +108,12 @@ export const sendBossNotify = async (message) => {
   }
 };
 
-// 🟢 新增：發送詳細售出紀錄到歷史頻道 (使用 Embed 樣式)
+// 發送詳細售出紀錄到歷史頻道
 export const sendSoldNotification = async (item, settledBy) => {
     if (!DISCORD_HISTORY_WEBHOOK_URL) return;
 
-    // 重新計算財務細節
-    const { tax, netIncome, perPersonSplit } = calculateFinance(
+    // 🟢 修正：移除了未使用的 netIncome
+    const { tax, perPersonSplit } = calculateFinance(
         item.price, 
         item.exchangeType, 
         item.participants?.length || 0, 
@@ -129,19 +128,16 @@ export const sendSoldNotification = async (item, settledBy) => {
         return `第${idx + 1}次: $${p.toLocaleString()} (費: ${fee})`;
     }).join('\n');
 
-    // 參與者名單
     const participantsStr = item.participants 
         ? item.participants.map(p => (typeof p === 'string' ? p : p.name)).join(', ') 
         : '無';
 
-    // 格式化日期
     const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleString('zh-TW', { hour12: false }) : '未知時間';
     const settleDateStr = new Date().toLocaleString('zh-TW', { hour12: false });
 
-    // 建構 Embed 物件
     const embed = {
         title: `💰 已售出：${item.itemName}`,
-        color: 5763719, // 綠色
+        color: 5763719, 
         fields: [
             { name: "📅 建立時間", value: dateStr, inline: true },
             { name: "👤 販售人", value: item.seller || '未知', inline: true },
