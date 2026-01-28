@@ -5,6 +5,7 @@ import {
   DISCORD_LOG_WEBHOOK_URL, 
   DISCORD_NOTIFY_WEBHOOK_URL, 
   DISCORD_BOSS_WEBHOOK_URL, 
+  DISCORD_HISTORY_WEBHOOK_URL, // 🟢 引入新網址
   BASE_LISTING_FEE_PERCENT, 
   EXCHANGE_TYPES 
 } from './constants';
@@ -15,44 +16,40 @@ export const calculateFinance = (price, exchangeTypeKey, participantCount, cost 
   const c = parseFloat(cost) || 0;
   const type = EXCHANGE_TYPES[exchangeTypeKey] || EXCHANGE_TYPES.WORLD;
 
-  // 1. 稅金 (保留邏輯)
+  // 1. 稅金
   const tax = p * type.tax;
 
-  // 2. 刊登費總計 (修正：強制為整數)
+  // 2. 刊登費總計
   // 如果 listingHistory 是空的，預設至少有一次當前價格的刊登費
   const history = (Array.isArray(listingHistory) && listingHistory.length > 0) ? listingHistory : [p];
   
   const rawListingFee = history.reduce((sum, val) => sum + (val * BASE_LISTING_FEE_PERCENT), 0);
-  const totalListingFee = Math.round(rawListingFee); // 修正：四捨五入取整，不顯示小數點
+  const totalListingFee = Math.round(rawListingFee);
 
-  // 3. 原始淨利 (售價 - 稅 - 刊登費 - 成本)
+  // 3. 原始淨利
   const rawNetIncome = p - tax - totalListingFee - c;
 
-  // 4. 萬位截斷邏輯 (Tail Logic)
-  // 需求：只計算萬後面的，千以前的都為 0，零頭給販賣人，且不歸到記帳
+  // 4. 萬位截斷邏輯
   let accountingNetIncome = 0;
   let sellerRemainder = 0;
 
   if (rawNetIncome > 0) {
-      // 下取整到萬位 (例如: 125400 -> 120000)
       accountingNetIncome = Math.floor(rawNetIncome / 10000) * 10000;
-      // 計算零頭 (例如: 5400)
       sellerRemainder = rawNetIncome - accountingNetIncome;
   } else {
-      // 如果是虧損，則不進行截斷，實報實銷
       accountingNetIncome = rawNetIncome;
       sellerRemainder = 0;
   }
 
-  // 5. 每人分紅 (基於截斷後的金額計算)
+  // 5. 每人分紅
   const perPersonSplit = participantCount > 0 ? Math.floor(accountingNetIncome / participantCount) : 0;
 
   return {
     tax,
-    totalListingFee, // 這是整數
-    netIncome: accountingNetIncome, // 這是要進帳簿的金額 (整萬)
-    rawNetIncome, // 這是實際賺的錢 (含零頭)
-    sellerRemainder, // 這是給賣家的零頭 (不入帳)
+    totalListingFee, 
+    netIncome: accountingNetIncome, 
+    rawNetIncome, 
+    sellerRemainder, 
     perPersonSplit
   };
 };
@@ -69,7 +66,6 @@ export const sendLog = async (user, action, details) => {
       timestamp: new Date().toISOString()
     });
 
-    // 🟢 新增：在這裡生成當前時間字串 HH:mm:ss
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
@@ -78,7 +74,6 @@ export const sendLog = async (user, action, details) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // 🟢 修改：在 details 後面補上時間
           content: `📝 **[LOG]** ${user} - ${action}: ${details} (${timeStr})`
         })
       });
@@ -101,6 +96,77 @@ export const sendNotify = async (message) => {
   }
 };
 
+export const sendBossNotify = async (message) => {
+  if (!DISCORD_BOSS_WEBHOOK_URL) return;
+  try {
+    await fetch(DISCORD_BOSS_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message })
+    });
+  } catch (e) {
+    console.error("Boss Notify failed", e);
+  }
+};
+
+// 🟢 新增：發送詳細售出紀錄到歷史頻道 (使用 Embed 樣式)
+export const sendSoldNotification = async (item, settledBy) => {
+    if (!DISCORD_HISTORY_WEBHOOK_URL) return;
+
+    // 重新計算財務細節
+    const { tax, netIncome, perPersonSplit } = calculateFinance(
+        item.price, 
+        item.exchangeType, 
+        item.participants?.length || 0, 
+        item.cost, 
+        item.listingHistory
+    );
+
+    // 格式化刊登費明細
+    const historyList = (item.listingHistory && item.listingHistory.length > 0) ? item.listingHistory : [item.price];
+    const listingFeeDetails = historyList.map((p, idx) => {
+        const fee = Math.round(p * BASE_LISTING_FEE_PERCENT);
+        return `第${idx + 1}次: $${p.toLocaleString()} (費: ${fee})`;
+    }).join('\n');
+
+    // 參與者名單
+    const participantsStr = item.participants 
+        ? item.participants.map(p => (typeof p === 'string' ? p : p.name)).join(', ') 
+        : '無';
+
+    // 格式化日期
+    const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleString('zh-TW', { hour12: false }) : '未知時間';
+    const settleDateStr = new Date().toLocaleString('zh-TW', { hour12: false });
+
+    // 建構 Embed 物件
+    const embed = {
+        title: `💰 已售出：${item.itemName}`,
+        color: 5763719, // 綠色
+        fields: [
+            { name: "📅 建立時間", value: dateStr, inline: true },
+            { name: "👤 販售人", value: item.seller || '未知', inline: true },
+            { name: "💎 販賣價格", value: `$${(item.price || 0).toLocaleString()}`, inline: true },
+            { name: "💸 刊登費明細", value: listingFeeDetails || '無', inline: false },
+            { name: "🏦 稅金", value: `$${tax.toLocaleString()}`, inline: true },
+            { name: "💵 淨利/人", value: `**$${perPersonSplit.toLocaleString()}**`, inline: true },
+            { name: "👥 分紅參與者", value: participantsStr, inline: false }
+        ],
+        footer: {
+            text: `結算人: ${settledBy} • 結算時間: ${settleDateStr}`
+        }
+    };
+
+    try {
+        await fetch(DISCORD_HISTORY_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ embeds: [embed] })
+        });
+    } catch (e) {
+        console.error("Sold Notify failed", e);
+    }
+};
+
 // === 時間格式化工具 ===
 
 export const formatTimeWithSeconds = (date) => {
@@ -119,42 +185,6 @@ export const formatTimeOnly = (dateInput) => {
   return `${h}:${m}`;
 };
 
-export const getCurrentDateStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-
-export const getCurrentTimeStr = () => {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`;
-};
-
-export const getRelativeDay = (dateStr) => {
-  const target = new Date(dateStr);
-  target.setHours(0,0,0,0);
-  const now = new Date();
-  now.setHours(0,0,0,0);
-  
-  const diffTime = target.getTime() - now.getTime();
-  const diffDays = diffTime / (1000 * 3600 * 24);
-
-  if (diffDays === 0) return 'today';
-  if (diffDays === 1) return 'tomorrow';
-  if (diffDays === -1) return 'yesterday';
-  return 'other';
-};
-export const sendBossNotify = async (message) => {
-  if (!DISCORD_BOSS_WEBHOOK_URL) return; // 如果沒設定網址就不發送
-  try {
-    await fetch(DISCORD_BOSS_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: message })
-    });
-  } catch (e) {
-    console.error("Boss Notify failed", e);
-  }
-};
 export const getRandomBrightColor = () => {
   const hue = Math.floor(Math.random() * 360);
   return `hsl(${hue}, 70%, 60%)`;

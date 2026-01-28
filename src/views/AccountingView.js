@@ -1,9 +1,11 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, History, Grid, Calculator, X, User, Users } from 'lucide-react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit } from "firebase/firestore";
+import { Plus, History, Grid, Calculator, X, User, Users, UploadCloud, Loader2 } from 'lucide-react';
+// 🟢 1. 引入 getDocs (為了遷移歷史功能)
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit, getDocs } from "firebase/firestore";
 import { db } from '../config/firebase';
-import { sendLog, sendNotify } from '../utils/helpers';
+// 🟢 2. 引入 sendSoldNotification
+import { sendLog, sendNotify, sendSoldNotification } from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
@@ -34,6 +36,10 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
+  // 🟢 遷移狀態
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState('');
+
   const [confirmSettleId, setConfirmSettleId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
@@ -71,19 +77,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return () => { unsubActive(); unsubHistory(); };
   }, [currentUser]);
 
-  // 🟢 修正：當 Modal 開啟時，重置表單並「全選」參與者
-  useEffect(() => { 
-    if (isModalOpen) {
-        setFormData({ 
-            itemName: '', 
-            price: '', 
-            cost: 0, 
-            seller: currentUser, 
-            participants: memberNames, // 預設帶入所有成員 (全選)
-            exchangeType: 'WORLD' 
-        });
-    }
-  }, [isModalOpen, currentUser, memberNames]);
+  useEffect(() => { if (isModalOpen) setFormData(prev => ({ ...prev, seller: currentUser })); }, [isModalOpen, currentUser]);
 
   const displayedActiveItems = useMemo(() => {
     if (filterMode === 'mine') {
@@ -99,7 +93,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       const newItem = { ...formData, price: parseNumber(formData.price), cost: parseNumber(formData.cost), createdAt: new Date().toISOString(), listingHistory: [parseNumber(formData.price)] };
       await addDoc(collection(db, "active_items"), newItem);
       setIsModalOpen(false);
-      // 成功後重置表單 (雖然 useEffect 也會處理，但雙重保險)
       setFormData({ itemName: '', price: '', cost: 0, seller: currentUser, participants: memberNames, exchangeType: 'WORLD' });
       sendLog(currentUser, "新增記帳", `${formData.itemName} ($${formData.price})`);
       sendNotify(`📦 **${currentUser}** 新增掛賣：${formData.itemName} (售價: ${formData.price})`);
@@ -155,8 +148,46 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       });
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
+      
+      // 🟢 3. 結算成功後，發送詳細歷史通知到 Discord
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
+      sendSoldNotification(item, currentUser); // 這會發送 Embed 到歷史頻道
+
     } catch (e) { console.error(e); alert(`結算失敗: ${e.message}`); }
+  };
+
+  // 🟢 4. 歷史遷移工具 (Wolf 專用)
+  const handleMigration = async () => {
+      if (currentUser !== 'Wolf') return;
+      if (!window.confirm("確定要將所有歷史紀錄同步到 Discord 嗎？\n這會讀取所有資料並花費一些時間。")) return;
+      
+      setIsMigrating(true);
+      try {
+          // 抓取所有歷史資料 (由舊到新排序)
+          const q = query(collection(db, "history_items"), orderBy("settledAt", "asc"));
+          const snapshot = await getDocs(q);
+          const total = snapshot.docs.length;
+          
+          let count = 0;
+          for (const d of snapshot.docs) {
+              const item = d.data();
+              // 發送通知
+              await sendSoldNotification(item, item.settledBy || '系統');
+              
+              count++;
+              setMigrationProgress(`${count} / ${total}`);
+              
+              // 延遲 2 秒避免被 Discord 封鎖
+              await new Promise(r => setTimeout(r, 2000));
+          }
+          alert("同步完成！");
+      } catch (e) {
+          console.error(e);
+          alert("同步發生錯誤，請看 Console");
+      } finally {
+          setIsMigrating(false);
+          setMigrationProgress('');
+      }
   };
 
   const toggleParticipantInForm = (name) => {
@@ -203,9 +234,20 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </button>
         
         {currentUser === 'Wolf' && (
-            <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                <History size={20}/> 歷史紀錄
-            </button>
+            <div className="flex gap-2">
+                <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                    <History size={20}/> 歷史紀錄
+                </button>
+                {/* 🟢 遷移按鈕：只在歷史選單沒打開時顯示，或者您可以隨意放置 */}
+                <button 
+                    onClick={handleMigration} 
+                    disabled={isMigrating}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg font-bold transition-all ${isMigrating ? 'bg-yellow-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'} text-white`}
+                >
+                    {isMigrating ? <Loader2 className="animate-spin" size={20}/> : <UploadCloud size={20}/>}
+                    {isMigrating ? `同步中... ${migrationProgress}` : '同步 Discord'}
+                </button>
+            </div>
         )}
 
         <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
