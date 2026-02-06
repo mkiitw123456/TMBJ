@@ -216,7 +216,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
               setMigrationProgress(`${count} / ${total}`);
               
               // 稍微延遲避免 GAS 限制 (雖然 no-cors 不會回傳，但太快還是可能漏)
-              await new Promise(r => setTimeout(r, 500));
+              await new Promise(r => setTimeout(r, 50));
           }
           alert("Google Sheet 同步完成！");
       } catch (e) {
