@@ -1,15 +1,16 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Plus, History, Grid, Calculator, X, User, Users, UploadCloud, Loader2 } from 'lucide-react';
-// 🟢 1. 引入 getDocs (為了遷移歷史功能)
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit, getDocs } from "firebase/firestore";
 import { db } from '../config/firebase';
-// 🟢 2. 引入 sendSoldNotification
 import { sendLog, sendNotify, sendSoldNotification } from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
+
+// 🟢 設定 Google Apps Script 網址
+const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
 
 const formatNumber = (num) => num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '';
 const parseNumber = (val) => parseFloat(val?.toString().replace(/,/g, '')) || 0;
@@ -36,7 +37,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
-  // 🟢 遷移狀態
+  // 遷移狀態
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationProgress, setMigrationProgress] = useState('');
 
@@ -85,6 +86,40 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     }
     return activeItems;
   }, [activeItems, filterMode, currentUser]);
+
+  // 🟢 輔助函式：傳送資料到 Google Sheet
+  const saveToGoogleSheet = async (item, profitOverride = null) => {
+    const profit = profitOverride !== null ? profitOverride : (item.finalSplit || 0);
+    
+    // 處理參與者格式 (轉成字串)
+    let participantsStr = "";
+    if (Array.isArray(item.participants)) {
+        participantsStr = item.participants.map(p => typeof p === 'string' ? p : p.name).join(', ');
+    }
+
+    const payload = {
+        createdAt: item.createdAt || new Date().toISOString(),
+        seller: item.seller || 'Unknown',
+        itemName: item.itemName || 'Unknown',
+        price: item.price || 0,
+        profit: profit,
+        participants: participantsStr
+    };
+
+    try {
+        await fetch(GOOGLE_SHEET_API_URL, {
+            method: 'POST',
+            mode: 'no-cors', // 關鍵：避免 CORS 錯誤，雖然無法讀取回應但能發送
+            headers: {
+                'Content-Type': 'text/plain' // GAS 比較好解析 text/plain
+            },
+            body: JSON.stringify(payload)
+        });
+        console.log("Sent to Google Sheet:", payload.itemName);
+    } catch (e) {
+        console.error("Sheet Sync Error:", e);
+    }
+  };
 
   const handleAddItem = async () => {
     if (currentUser === '訪客') return alert("訪客僅供瀏覽");
@@ -149,21 +184,24 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
       
-      // 🟢 3. 結算成功後，發送詳細歷史通知到 Discord
+      // 3. 結算成功後，發送詳細歷史通知到 Discord
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
-      sendSoldNotification(item, currentUser); // 這會發送 Embed 到歷史頻道
+      sendSoldNotification(item, currentUser); 
+
+      // 🟢 4. 自動同步到 Google Sheet
+      saveToGoogleSheet(item, perPersonAmount);
 
     } catch (e) { console.error(e); alert(`結算失敗: ${e.message}`); }
   };
 
-  // 🟢 4. 歷史遷移工具 (Wolf 專用)
+  // 🟢 5. 歷史遷移工具 (改為同步 Google Sheet)
   const handleMigration = async () => {
       if (currentUser !== 'Wolf') return;
-      if (!window.confirm("確定要將所有歷史紀錄同步到 Discord 嗎？\n這會讀取所有資料並花費一些時間。")) return;
+      if (!window.confirm("確定要將所有歷史紀錄同步到 Google Sheet 嗎？\n這會讀取所有資料並逐筆寫入 (請勿關閉視窗)。")) return;
       
       setIsMigrating(true);
       try {
-          // 抓取所有歷史資料 (由舊到新排序)
+          // 抓取所有歷史資料 (由舊到新排序，方便試算表依照時間排列)
           const q = query(collection(db, "history_items"), orderBy("settledAt", "asc"));
           const snapshot = await getDocs(q);
           const total = snapshot.docs.length;
@@ -171,16 +209,16 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           let count = 0;
           for (const d of snapshot.docs) {
               const item = d.data();
-              // 發送通知
-              await sendSoldNotification(item, item.settledBy || '系統');
+              // 發送資料到 Google Sheet
+              await saveToGoogleSheet(item, item.finalSplit);
               
               count++;
               setMigrationProgress(`${count} / ${total}`);
               
-              // 延遲 2 秒避免被 Discord 封鎖
-              await new Promise(r => setTimeout(r, 2000));
+              // 稍微延遲避免 GAS 限制 (雖然 no-cors 不會回傳，但太快還是可能漏)
+              await new Promise(r => setTimeout(r, 500));
           }
-          alert("同步完成！");
+          alert("Google Sheet 同步完成！");
       } catch (e) {
           console.error(e);
           alert("同步發生錯誤，請看 Console");
@@ -238,14 +276,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                     <History size={20}/> 歷史紀錄
                 </button>
-                {/* 🟢 遷移按鈕：只在歷史選單沒打開時顯示，或者您可以隨意放置 */}
+                {/* 🟢 遷移按鈕：文字改為同步 Google Sheet */}
                 <button 
                     onClick={handleMigration} 
                     disabled={isMigrating}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg font-bold transition-all ${isMigrating ? 'bg-yellow-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'} text-white`}
                 >
                     {isMigrating ? <Loader2 className="animate-spin" size={20}/> : <UploadCloud size={20}/>}
-                    {isMigrating ? `同步中... ${migrationProgress}` : '同步 Discord'}
+                    {isMigrating ? `同步中... ${migrationProgress}` : '同步 Google Sheet'}
                 </button>
             </div>
         )}
