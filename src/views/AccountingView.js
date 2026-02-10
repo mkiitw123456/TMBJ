@@ -1,6 +1,5 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-// 🟢 1. 引入 Search 圖示，移除 History, UploadCloud
 import { Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
@@ -10,15 +9,16 @@ import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
 
-// 🟢 2. 設定 Google Sheet 相關網址
+// 🟢 1. 寫入用的 API (維持原本的 GAS 連結)
 const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
-// 🔴 請填入您的 Google Sheet CSV 發布連結 (跟 Discord 機器人用的那串一樣)
-const GOOGLE_SHEET_CSV_URL = "YOUR_GOOGLE_SHEET_CSV_URL_HERE"; 
+
+// 🟢 2. 讀取用的 CSV (已填入您提供的連結)
+const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQtVWCzNdv-0BNV4SMvA8WH6P7IcOi7x11gXqkK53u6aY_eOeFiSMdW9W5UNWkGv_L-IucNVNvl0_5h/pub?output=csv";
 
 const formatNumber = (num) => num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '';
 const parseNumber = (val) => parseFloat(val?.toString().replace(/,/g, '')) || 0;
 
-// 簡單的 CSV 解析器 (處理逗號與引號)
+// CSV 解析器
 const parseCSVLine = (text) => {
     const result = [];
     let start = 0;
@@ -57,7 +57,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
-  // 🟢 3. 查詢收益相關狀態
+  // 查詢收益相關狀態
   const [isQueryOpen, setIsQueryOpen] = useState(false);
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryResult, setQueryResult] = useState(null);
@@ -79,7 +79,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
 
-  // Data Fetching (只監聽 active_items，省流量)
+  // Data Fetching
   useEffect(() => {
     if (!db) return;
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
@@ -118,9 +118,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     } catch (e) { console.error("Sheet Sync Error:", e); }
   };
 
-  // 🟢 4. 執行收益查詢 (從 Google Sheet CSV)
+  // 🟢 執行收益查詢 (從 Google Sheet CSV)
   const handleQueryRevenue = async () => {
-      if (!GOOGLE_SHEET_CSV_URL || GOOGLE_SHEET_CSV_URL.includes("YOUR_")) return alert("請先設定 CSV 網址");
+      if (!GOOGLE_SHEET_CSV_URL) return alert("CSV 網址未設定");
       setQueryLoading(true);
       setQueryResult(null);
       
@@ -131,20 +131,20 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           
           if (rows.length < 2) throw new Error("無資料");
 
-          // 解析標題以找到欄位索引
           const headers = parseCSVLine(rows[0]);
-          const idxTime = headers.findIndex(h => h.includes('建立時間'));
-          const idxSeller = headers.findIndex(h => h.includes('販售人'));
-          const idxPrice = headers.findIndex(h => h.includes('價格'));
-          // 如果需要淨利，可找 '淨利/人'
+          // 容錯搜尋：尋找包含關鍵字的欄位
+          const idxTime = headers.findIndex(h => h.includes('建立時間') || h.includes('Date'));
+          const idxSeller = headers.findIndex(h => h.includes('販售人') || h.includes('Seller'));
+          const idxPrice = headers.findIndex(h => h.includes('價格') || h.includes('Price'));
+          const idxItemName = headers.findIndex(h => h.includes('物品名稱') || h.includes('Item'));
 
           if (idxTime === -1 || idxSeller === -1 || idxPrice === -1) {
-             throw new Error("CSV 欄位格式不符");
+             throw new Error("CSV 欄位格式不符，請檢查 Google Sheet 標題列");
           }
 
           const startDate = new Date(queryForm.start);
           const endDate = new Date(queryForm.end);
-          endDate.setHours(23, 59, 59); // 包含結束當天
+          endDate.setHours(23, 59, 59);
 
           let totalSales = 0;
           let count = 0;
@@ -153,10 +153,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           // 從第二行開始遍歷
           for (let i = 1; i < rows.length; i++) {
               const cols = parseCSVLine(rows[i]);
+              if (cols.length <= idxPrice) continue;
+
               const rowTimeStr = cols[idxTime];
               const rowSeller = cols[idxSeller];
               const rowPrice = parseFloat(cols[idxPrice]) || 0;
-              const rowItemName = cols[headers.findIndex(h => h.includes('物品名稱'))] || '未知物品';
+              const rowItemName = idxItemName !== -1 ? cols[idxItemName] : '未知物品';
 
               if (!rowTimeStr) continue;
               
@@ -165,7 +167,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
               if (rowSeller === queryForm.member && rowDate >= startDate && rowDate <= endDate) {
                   totalSales += rowPrice;
                   count++;
-                  // 紀錄前幾筆高價的
                   details.push({ name: rowItemName, price: rowPrice });
               }
           }
@@ -243,7 +244,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         
         const historyData = { ...item, settledAt: new Date().toISOString(), finalSplit: perPersonAmount, settledBy: currentUser, listingHistory: item.listingHistory || [] };
         delete historyData.id;
-        // 雖然不在 UI 顯示，但還是寫入 Firebase 留底 (或您可以決定要不要註解掉這兩行來極致省流)
+        
+        // 寫入 Firebase (若您想極致省空間可註解這兩行，但建議留著當備份)
         const newHistoryRef = doc(collection(db, "history_items"));
         transaction.set(newHistoryRef, historyData);
         transaction.delete(doc(db, "active_items", item.id));
@@ -254,6 +256,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
       sendSoldNotification(item, currentUser);
       
+      // 同步到 Google Sheet (重要)
       await saveToGoogleSheet(item, perPersonAmount);
 
       setTimeout(() => { setIsProcessing(false); }, 500);
@@ -289,7 +292,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             <Grid size={20}/> 餘額表
         </button>
 
-        {/* 🟢 5. 新增：查詢收益按鈕 (取代原本的歷史與同步按鈕) */}
+        {/* 查詢收益按鈕 (取代原本的歷史與同步按鈕) */}
         <div className="flex gap-2">
             <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                 <Search size={20}/> 查詢收益
@@ -323,7 +326,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* 🟢 6. 收益查詢 Modal */}
+      {/* 收益查詢 Modal */}
       {isQueryOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
