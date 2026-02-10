@@ -1,6 +1,7 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, History, Grid, Calculator, X, User, Users, UploadCloud, Loader2 } from 'lucide-react';
+// 🟢 1. 新增 AlertTriangle 圖示
+import { Plus, History, Grid, Calculator, X, User, Users, UploadCloud, Loader2, AlertTriangle } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit, getDocs } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { sendLog, sendNotify, sendSoldNotification } from '../utils/helpers';
@@ -9,7 +10,7 @@ import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
 
-// 🟢 設定 Google Apps Script 網址
+// 🟢 2. 補回 Google Sheet API 網址 (確保機器人能運作)
 const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
 
 const formatNumber = (num) => num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '';
@@ -40,6 +41,10 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   // 遷移狀態
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationProgress, setMigrationProgress] = useState('');
+
+  // 🟢 3. 新增處理狀態 (控制遮罩)
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processError, setProcessError] = useState(false);
 
   const [confirmSettleId, setConfirmSettleId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -87,16 +92,13 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return activeItems;
   }, [activeItems, filterMode, currentUser]);
 
-  // 🟢 輔助函式：傳送資料到 Google Sheet
+  // 🟢 4. 補回 Google Sheet 同步函式
   const saveToGoogleSheet = async (item, profitOverride = null) => {
     const profit = profitOverride !== null ? profitOverride : (item.finalSplit || 0);
-    
-    // 處理參與者格式 (轉成字串)
     let participantsStr = "";
     if (Array.isArray(item.participants)) {
         participantsStr = item.participants.map(p => typeof p === 'string' ? p : p.name).join(', ');
     }
-
     const payload = {
         createdAt: item.createdAt || new Date().toISOString(),
         seller: item.seller || 'Unknown',
@@ -105,20 +107,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         profit: profit,
         participants: participantsStr
     };
-
     try {
         await fetch(GOOGLE_SHEET_API_URL, {
             method: 'POST',
-            mode: 'no-cors', // 關鍵：避免 CORS 錯誤，雖然無法讀取回應但能發送
-            headers: {
-                'Content-Type': 'text/plain' // GAS 比較好解析 text/plain
-            },
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
         });
-        console.log("Sent to Google Sheet:", payload.itemName);
-    } catch (e) {
-        console.error("Sheet Sync Error:", e);
-    }
+    } catch (e) { console.error("Sheet Sync Error:", e); }
   };
 
   const handleAddItem = async () => {
@@ -148,8 +144,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     } catch (e) { alert("刪除失敗"); }
   };
 
+  // 🟢 5. 修改後的結算函式 (包含遮罩與 Google Sheet 同步)
   const handleSettleAll = async (item, perPersonAmount) => {
     if (currentUser === '訪客') return alert("訪客權限不足");
+    
+    // 開啟遮罩，重置錯誤
+    setIsProcessing(true);
+    setProcessError(false);
+
     const safeParticipants = Array.isArray(item.participants) ? item.participants : [];
 
     try {
@@ -181,27 +183,35 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         transaction.set(newHistoryRef, historyData);
         transaction.delete(doc(db, "active_items", item.id));
       });
+      
+      // 後續處理
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
-      
-      // 3. 結算成功後，發送詳細歷史通知到 Discord
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
-      sendSoldNotification(item, currentUser); 
+      sendSoldNotification(item, currentUser);
+      
+      // 同步到 Google Sheet (重要！機器人需要這個)
+      await saveToGoogleSheet(item, perPersonAmount);
 
-      // 🟢 4. 自動同步到 Google Sheet
-      saveToGoogleSheet(item, perPersonAmount);
+      // 成功！延遲 0.5 秒關閉遮罩
+      setTimeout(() => {
+          setIsProcessing(false);
+      }, 500);
 
-    } catch (e) { console.error(e); alert(`結算失敗: ${e.message}`); }
+    } catch (e) { 
+        console.error(e); 
+        // 失敗！顯示錯誤 UI，且不關閉遮罩
+        setProcessError(true);
+    }
   };
 
-  // 🟢 5. 歷史遷移工具 (改為同步 Google Sheet)
+  // 歷史遷移工具 (維持原樣同步到 Discord，若需要同步到 Sheet 可自行修改)
   const handleMigration = async () => {
       if (currentUser !== 'Wolf') return;
-      if (!window.confirm("確定要將所有歷史紀錄同步到 Google Sheet 嗎？\n這會讀取所有資料並逐筆寫入 (請勿關閉視窗)。")) return;
+      if (!window.confirm("確定要將所有歷史紀錄同步到 Discord 嗎？\n這會讀取所有資料並花費一些時間。")) return;
       
       setIsMigrating(true);
       try {
-          // 抓取所有歷史資料 (由舊到新排序，方便試算表依照時間排列)
           const q = query(collection(db, "history_items"), orderBy("settledAt", "asc"));
           const snapshot = await getDocs(q);
           const total = snapshot.docs.length;
@@ -209,16 +219,13 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           let count = 0;
           for (const d of snapshot.docs) {
               const item = d.data();
-              // 發送資料到 Google Sheet
-              await saveToGoogleSheet(item, item.finalSplit);
+              await sendSoldNotification(item, item.settledBy || '系統');
               
               count++;
               setMigrationProgress(`${count} / ${total}`);
-              
-              // 稍微延遲避免 GAS 限制 (雖然 no-cors 不會回傳，但太快還是可能漏)
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise(r => setTimeout(r, 2000));
           }
-          alert("Google Sheet 同步完成！");
+          alert("同步完成！");
       } catch (e) {
           console.error(e);
           alert("同步發生錯誤，請看 Console");
@@ -276,14 +283,13 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                     <History size={20}/> 歷史紀錄
                 </button>
-                {/* 🟢 遷移按鈕：文字改為同步 Google Sheet */}
                 <button 
                     onClick={handleMigration} 
                     disabled={isMigrating}
                     className={`flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg font-bold transition-all ${isMigrating ? 'bg-yellow-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'} text-white`}
                 >
                     {isMigrating ? <Loader2 className="animate-spin" size={20}/> : <UploadCloud size={20}/>}
-                    {isMigrating ? `同步中... ${migrationProgress}` : '同步 Google Sheet'}
+                    {isMigrating ? `同步中... ${migrationProgress}` : '同步 Discord'}
                 </button>
             </div>
         )}
@@ -406,6 +412,39 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             <div className="mb-6"><div className="flex justify-between items-center mb-2"><label className={`text-xs ${theme.subText}`}>分紅參與者</label><button onClick={() => setFormData({...formData, participants: []})} className="text-xs text-blue-500 hover:underline">清空</button></div><div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">{memberNames.map(m => (<button key={m} onClick={() => toggleParticipantInForm(m)} className={`px-3 py-1 rounded-full text-xs border ${formData.participants.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-500 text-gray-500'}`}>{m}</button>))}</div></div>
             <div className="flex gap-3"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button><button onClick={handleAddItem} className="flex-1 py-3 bg-blue-600 rounded-lg text-white font-bold">建立項目</button></div>
           </div>
+        </div>
+      )}
+
+      {/* 🟢 6. 全螢幕防呆遮罩 */}
+      {isProcessing && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-gray-900 border border-gray-700 p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center flex flex-col items-center animate-in fade-in zoom-in duration-200">
+                
+                {!processError ? (
+                    // 正常處理中
+                    <>
+                        <Loader2 size={64} className="text-blue-500 animate-spin mb-6" />
+                        <h3 className="text-xl font-bold text-white mb-2">正在出售並計算後台數據...</h3>
+                        <p className="text-gray-400 text-sm">請勿關閉視窗，正在同步資料庫</p>
+                    </>
+                ) : (
+                    // 發生錯誤
+                    <>
+                        <div className="w-16 h-16 bg-red-900/50 rounded-full flex items-center justify-center mb-6">
+                            <AlertTriangle size={40} className="text-red-500" />
+                        </div>
+                        <h3 className="text-xl font-bold text-white mb-2">系統發生異常！</h3>
+                        <p className="text-red-300 text-sm mb-6">已出售過程發生錯誤<br/>請在 Discord Tag Wolf</p>
+                        <button 
+                            onClick={() => setIsProcessing(false)}
+                            className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-bold transition-colors"
+                        >
+                            關閉並重試
+                        </button>
+                    </>
+                )}
+
+            </div>
         </div>
       )}
 
