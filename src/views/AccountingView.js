@@ -1,8 +1,8 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-// 🟢 1. 新增 AlertTriangle 圖示
-import { Plus, History, Grid, Calculator, X, User, Users, UploadCloud, Loader2, AlertTriangle } from 'lucide-react';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction, limit, getDocs } from "firebase/firestore";
+// 🟢 1. 引入 Search 圖示，移除 History, UploadCloud
+import { Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search } from 'lucide-react';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { sendLog, sendNotify, sendSoldNotification } from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
@@ -10,11 +10,33 @@ import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
 
-// 🟢 2. 補回 Google Sheet API 網址 (確保機器人能運作)
+// 🟢 2. 設定 Google Sheet 相關網址
 const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
+// 🔴 請填入您的 Google Sheet CSV 發布連結 (跟 Discord 機器人用的那串一樣)
+const GOOGLE_SHEET_CSV_URL = "YOUR_GOOGLE_SHEET_CSV_URL_HERE"; 
 
 const formatNumber = (num) => num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '';
 const parseNumber = (val) => parseFloat(val?.toString().replace(/,/g, '')) || 0;
+
+// 簡單的 CSV 解析器 (處理逗號與引號)
+const parseCSVLine = (text) => {
+    const result = [];
+    let start = 0;
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === '"') inQuotes = !inQuotes;
+        if (text[i] === ',' && !inQuotes) {
+            let field = text.substring(start, i).trim();
+            if (field.startsWith('"') && field.endsWith('"')) field = field.slice(1, -1);
+            result.push(field);
+            start = i + 1;
+        }
+    }
+    let lastField = text.substring(start).trim();
+    if (lastField.startsWith('"') && lastField.endsWith('"')) lastField = lastField.slice(1, -1);
+    result.push(lastField);
+    return result;
+};
 
 const MoneyInput = ({ value, onChange, className, placeholder }) => {
   const [display, setDisplay] = useState('');
@@ -28,30 +50,27 @@ const MoneyInput = ({ value, onChange, className, placeholder }) => {
 
 const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [activeItems, setActiveItems] = useState([]);
-  const [historyItems, setHistoryItems] = useState([]);
-  
   const [filterMode, setFilterMode] = useState('all'); 
 
   // Modals & UI States
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
-  // 遷移狀態
-  const [isMigrating, setIsMigrating] = useState(false);
-  const [migrationProgress, setMigrationProgress] = useState('');
+  // 🟢 3. 查詢收益相關狀態
+  const [isQueryOpen, setIsQueryOpen] = useState(false);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [queryResult, setQueryResult] = useState(null);
+  const [queryForm, setQueryForm] = useState({
+      member: currentUser === '訪客' || currentUser === 'Wolf' ? (members[0]?.name || '') : currentUser,
+      start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0], // 預設月初
+      end: new Date().toISOString().split('T')[0] // 預設今天
+  });
 
-  // 🟢 3. 新增處理狀態 (控制遮罩)
   const [isProcessing, setIsProcessing] = useState(false);
   const [processError, setProcessError] = useState(false);
-
   const [confirmSettleId, setConfirmSettleId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-
-  const [historyFilterMember, setHistoryFilterMember] = useState('all');
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
-
   const [formData, setFormData] = useState({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
 
   const filteredMembers = useMemo(() => {
@@ -60,28 +79,13 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
 
-  // Data Fetching
+  // Data Fetching (只監聽 active_items，省流量)
   useEffect(() => {
     if (!db) return;
-    
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
     const unsubActive = onSnapshot(qActive, (snap) => setActiveItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
-
-    let unsubHistory = () => {};
-
-    if (currentUser === 'Wolf') {
-        const qHistory = query(
-            collection(db, "history_items"), 
-            orderBy("settledAt", "desc"),
-            limit(50) 
-        );
-        unsubHistory = onSnapshot(qHistory, (snap) => setHistoryItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
-    } else {
-        setHistoryItems([]);
-    }
-
-    return () => { unsubActive(); unsubHistory(); };
-  }, [currentUser]);
+    return () => unsubActive();
+  }, []);
 
   useEffect(() => { if (isModalOpen) setFormData(prev => ({ ...prev, seller: currentUser })); }, [isModalOpen, currentUser]);
 
@@ -92,7 +96,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return activeItems;
   }, [activeItems, filterMode, currentUser]);
 
-  // 🟢 4. 補回 Google Sheet 同步函式
   const saveToGoogleSheet = async (item, profitOverride = null) => {
     const profit = profitOverride !== null ? profitOverride : (item.finalSplit || 0);
     let participantsStr = "";
@@ -109,12 +112,76 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     };
     try {
         await fetch(GOOGLE_SHEET_API_URL, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'text/plain' },
+            method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
         });
     } catch (e) { console.error("Sheet Sync Error:", e); }
+  };
+
+  // 🟢 4. 執行收益查詢 (從 Google Sheet CSV)
+  const handleQueryRevenue = async () => {
+      if (!GOOGLE_SHEET_CSV_URL || GOOGLE_SHEET_CSV_URL.includes("YOUR_")) return alert("請先設定 CSV 網址");
+      setQueryLoading(true);
+      setQueryResult(null);
+      
+      try {
+          const response = await fetch(GOOGLE_SHEET_CSV_URL);
+          const text = await response.text();
+          const rows = text.split('\n').map(line => line.trim()).filter(line => line);
+          
+          if (rows.length < 2) throw new Error("無資料");
+
+          // 解析標題以找到欄位索引
+          const headers = parseCSVLine(rows[0]);
+          const idxTime = headers.findIndex(h => h.includes('建立時間'));
+          const idxSeller = headers.findIndex(h => h.includes('販售人'));
+          const idxPrice = headers.findIndex(h => h.includes('價格'));
+          // 如果需要淨利，可找 '淨利/人'
+
+          if (idxTime === -1 || idxSeller === -1 || idxPrice === -1) {
+             throw new Error("CSV 欄位格式不符");
+          }
+
+          const startDate = new Date(queryForm.start);
+          const endDate = new Date(queryForm.end);
+          endDate.setHours(23, 59, 59); // 包含結束當天
+
+          let totalSales = 0;
+          let count = 0;
+          const details = [];
+
+          // 從第二行開始遍歷
+          for (let i = 1; i < rows.length; i++) {
+              const cols = parseCSVLine(rows[i]);
+              const rowTimeStr = cols[idxTime];
+              const rowSeller = cols[idxSeller];
+              const rowPrice = parseFloat(cols[idxPrice]) || 0;
+              const rowItemName = cols[headers.findIndex(h => h.includes('物品名稱'))] || '未知物品';
+
+              if (!rowTimeStr) continue;
+              
+              const rowDate = new Date(rowTimeStr);
+              // 篩選條件：販售人吻合 && 時間在範圍內
+              if (rowSeller === queryForm.member && rowDate >= startDate && rowDate <= endDate) {
+                  totalSales += rowPrice;
+                  count++;
+                  // 紀錄前幾筆高價的
+                  details.push({ name: rowItemName, price: rowPrice });
+              }
+          }
+
+          // 排序取前 5 高價
+          details.sort((a, b) => b.price - a.price);
+          const topItems = details.slice(0, 5);
+
+          setQueryResult({ totalSales, count, topItems });
+
+      } catch (e) {
+          console.error(e);
+          alert("查詢失敗，請檢查 CSV 連結或網路狀態");
+      } finally {
+          setQueryLoading(false);
+      }
   };
 
   const handleAddItem = async () => {
@@ -144,11 +211,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     } catch (e) { alert("刪除失敗"); }
   };
 
-  // 🟢 5. 修改後的結算函式 (包含遮罩與 Google Sheet 同步)
   const handleSettleAll = async (item, perPersonAmount) => {
     if (currentUser === '訪客') return alert("訪客權限不足");
-    
-    // 開啟遮罩，重置錯誤
     setIsProcessing(true);
     setProcessError(false);
 
@@ -179,60 +243,24 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         
         const historyData = { ...item, settledAt: new Date().toISOString(), finalSplit: perPersonAmount, settledBy: currentUser, listingHistory: item.listingHistory || [] };
         delete historyData.id;
+        // 雖然不在 UI 顯示，但還是寫入 Firebase 留底 (或您可以決定要不要註解掉這兩行來極致省流)
         const newHistoryRef = doc(collection(db, "history_items"));
         transaction.set(newHistoryRef, historyData);
         transaction.delete(doc(db, "active_items", item.id));
       });
       
-      // 後續處理
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
       sendSoldNotification(item, currentUser);
       
-      // 同步到 Google Sheet (重要！機器人需要這個)
       await saveToGoogleSheet(item, perPersonAmount);
 
-      // 成功！延遲 0.5 秒關閉遮罩
-      setTimeout(() => {
-          setIsProcessing(false);
-      }, 500);
-
+      setTimeout(() => { setIsProcessing(false); }, 500);
     } catch (e) { 
         console.error(e); 
-        // 失敗！顯示錯誤 UI，且不關閉遮罩
         setProcessError(true);
     }
-  };
-
-  // 歷史遷移工具 (維持原樣同步到 Discord，若需要同步到 Sheet 可自行修改)
-  const handleMigration = async () => {
-      if (currentUser !== 'Wolf') return;
-      if (!window.confirm("確定要將所有歷史紀錄同步到 Discord 嗎？\n這會讀取所有資料並花費一些時間。")) return;
-      
-      setIsMigrating(true);
-      try {
-          const q = query(collection(db, "history_items"), orderBy("settledAt", "asc"));
-          const snapshot = await getDocs(q);
-          const total = snapshot.docs.length;
-          
-          let count = 0;
-          for (const d of snapshot.docs) {
-              const item = d.data();
-              await sendSoldNotification(item, item.settledBy || '系統');
-              
-              count++;
-              setMigrationProgress(`${count} / ${total}`);
-              await new Promise(r => setTimeout(r, 2000));
-          }
-          alert("同步完成！");
-      } catch (e) {
-          console.error(e);
-          alert("同步發生錯誤，請看 Console");
-      } finally {
-          setIsMigrating(false);
-          setMigrationProgress('');
-      }
   };
 
   const toggleParticipantInForm = (name) => {
@@ -242,29 +270,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     });
   };
 
-  const filteredHistory = historyItems.filter(item => {
-    const matchMember = historyFilterMember === 'all' || item.seller === historyFilterMember || item.participants.includes(historyFilterMember);
-    if (!matchMember) return false;
-    if (dateRange.start && new Date(item.settledAt) < new Date(dateRange.start)) return false;
-    if (dateRange.end) {
-        const endDate = new Date(dateRange.end);
-        endDate.setHours(23, 59, 59);
-        if (new Date(item.settledAt) > endDate) return false;
-    }
-    return true;
-  });
-
-  const historyTotalSplit = filteredHistory.reduce((sum, item) => {
-      return sum + (item.finalSplit || 0);
-  }, 0);
-
   const theme = { 
       card: isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200', 
       text: isDarkMode ? 'text-gray-100' : 'text-gray-800', 
       subText: isDarkMode ? 'text-gray-400' : 'text-gray-500', 
       input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-gray-50 border-gray-200 text-gray-800' 
   };
-
   const mainBgClass = isDarkMode ? 'text-gray-100' : 'text-gray-900';
 
   return (
@@ -277,22 +288,13 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
             <Grid size={20}/> 餘額表
         </button>
-        
-        {currentUser === 'Wolf' && (
-            <div className="flex gap-2">
-                <button onClick={() => setIsHistoryOpen(true)} className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                    <History size={20}/> 歷史紀錄
-                </button>
-                <button 
-                    onClick={handleMigration} 
-                    disabled={isMigrating}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg font-bold transition-all ${isMigrating ? 'bg-yellow-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'} text-white`}
-                >
-                    {isMigrating ? <Loader2 className="animate-spin" size={20}/> : <UploadCloud size={20}/>}
-                    {isMigrating ? `同步中... ${migrationProgress}` : '同步 Discord'}
-                </button>
-            </div>
-        )}
+
+        {/* 🟢 5. 新增：查詢收益按鈕 (取代原本的歷史與同步按鈕) */}
+        <div className="flex gap-2">
+            <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                <Search size={20}/> 查詢收益
+            </button>
+        </div>
 
         <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
             <Calculator size={20}/> 計算機
@@ -303,38 +305,15 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       <div className="mb-8">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
             <h2 className="text-2xl font-bold">進行中項目</h2>
-            
             <div className="flex bg-black/20 p-1 rounded-lg border border-white/10 self-end sm:self-auto">
-                <button 
-                    onClick={() => setFilterMode('all')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
-                >
-                    <Users size={14}/> 全部
-                </button>
-                <button 
-                    onClick={() => setFilterMode('mine')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
-                >
-                    <User size={14}/> 我的
-                </button>
+                <button onClick={() => setFilterMode('all')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <Users size={14}/> 全部 </button>
+                <button onClick={() => setFilterMode('mine')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <User size={14}/> 我的 </button>
             </div>
         </div>
 
         <div className="grid grid-cols-1 gap-6">
           {displayedActiveItems.map(item => (
-            <ItemCard 
-                key={item.id} 
-                item={item} 
-                theme={theme} 
-                updateItemValue={updateItemValue} 
-                handleSettleAll={handleSettleAll} 
-                handleDelete={handleDelete}
-                confirmSettleId={confirmSettleId}
-                setConfirmSettleId={setConfirmSettleId}
-                confirmDeleteId={confirmDeleteId}
-                setConfirmDeleteId={setConfirmDeleteId}
-                currentUser={currentUser}
-            />
+            <ItemCard key={item.id} item={item} theme={theme} updateItemValue={updateItemValue} handleSettleAll={handleSettleAll} handleDelete={handleDelete} confirmSettleId={confirmSettleId} setConfirmSettleId={setConfirmSettleId} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser} />
           ))}
           {displayedActiveItems.length === 0 && (
               <div className="col-span-full text-center py-10 opacity-30 border-2 border-dashed border-gray-500 rounded-xl">
@@ -344,52 +323,65 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* History Modal */}
-      {isHistoryOpen && currentUser === 'Wolf' && (
-        <div className={`fixed inset-0 z-50 flex flex-col ${isDarkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-            <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-black/20 shrink-0">
-              <h3 className={`text-xl font-bold flex items-center gap-2 ${theme.text}`}>
-                  <History/> 歷史紀錄 (最近50筆)
-              </h3>
-              <button 
-                  onClick={() => setIsHistoryOpen(false)}
-                  className={`p-2 rounded-full hover:bg-white/10 transition-colors ${theme.text}`}
-              >
-                  <X size={24}/>
-              </button>
+      {/* 🟢 6. 收益查詢 Modal */}
+      {isQueryOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
+            <div className="flex justify-between items-center mb-6">
+                <h3 className={`text-xl font-bold ${theme.text} flex items-center gap-2`}><Search size={20}/> 歷史收益查詢</h3>
+                <button onClick={() => setIsQueryOpen(false)} className={theme.text}><X/></button>
             </div>
-            
-            <div className="p-4 border-b border-gray-700 flex flex-wrap gap-4 items-end bg-black/10 shrink-0">
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs opacity-70">篩選成員</label>
-                    <select className={`p-2 rounded border ${theme.input}`} value={historyFilterMember} onChange={e=>setHistoryFilterMember(e.target.value)}>
-                        <option value="all">全部成員</option>
+
+            <div className="space-y-4">
+                <div>
+                    <label className={`block text-xs mb-1 ${theme.subText}`}>查詢對象</label>
+                    <select className={`w-full p-3 rounded-lg border ${theme.input}`} value={queryForm.member} onChange={e => setQueryForm({...queryForm, member: e.target.value})}>
                         {memberNames.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                 </div>
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs opacity-70">日期範圍</label>
-                    <div className="flex gap-2">
-                        <input type="date" className={`p-2 rounded border ${theme.input}`} value={dateRange.start} onChange={e=>setDateRange({...dateRange, start: e.target.value})}/>
-                        <span className="self-center">~</span>
-                        <input type="date" className={`p-2 rounded border ${theme.input}`} value={dateRange.end} onChange={e=>setDateRange({...dateRange, end: e.target.value})}/>
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className={`block text-xs mb-1 ${theme.subText}`}>開始日期</label>
+                        <input type="date" className={`w-full p-3 rounded-lg border ${theme.input}`} value={queryForm.start} onChange={e => setQueryForm({...queryForm, start: e.target.value})}/>
+                    </div>
+                    <div>
+                        <label className={`block text-xs mb-1 ${theme.subText}`}>結束日期</label>
+                        <input type="date" className={`w-full p-3 rounded-lg border ${theme.input}`} value={queryForm.end} onChange={e => setQueryForm({...queryForm, end: e.target.value})}/>
                     </div>
                 </div>
-                {historyFilterMember !== 'all' && (
-                    <div className="ml-auto bg-green-900/30 border border-green-500/30 px-4 py-2 rounded text-green-400 font-bold">
-                        {historyFilterMember} 此區間分紅總計: ${historyTotalSplit.toLocaleString()}
+
+                <button 
+                    onClick={handleQueryRevenue} 
+                    disabled={queryLoading}
+                    className="w-full py-3 bg-teal-600 hover:bg-teal-500 rounded-lg text-white font-bold flex items-center justify-center gap-2"
+                >
+                    {queryLoading ? <Loader2 className="animate-spin" size={20}/> : <Search size={20}/>}
+                    {queryLoading ? '資料讀取中...' : '開始查詢'}
+                </button>
+
+                {/* 查詢結果區塊 */}
+                {queryResult && (
+                    <div className="mt-4 p-4 rounded-xl bg-black/20 border border-white/10 animate-in fade-in zoom-in">
+                        <div className="text-center mb-4">
+                            <p className="text-sm opacity-60">期間總銷售額 ({queryForm.member})</p>
+                            <p className="text-3xl font-bold text-teal-400">${queryResult.totalSales.toLocaleString()}</p>
+                            <p className="text-xs opacity-50 mt-1">共 {queryResult.count} 筆交易</p>
+                        </div>
+                        {queryResult.topItems.length > 0 && (
+                            <div className="space-y-2">
+                                <p className="text-xs font-bold opacity-70 border-b border-white/10 pb-1">🔥 最高價交易 (Top 5)</p>
+                                {queryResult.topItems.map((item, idx) => (
+                                    <div key={idx} className="flex justify-between text-sm">
+                                        <span>{item.name}</span>
+                                        <span className="font-mono opacity-80">${item.price.toLocaleString()}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                <div className="max-w-7xl mx-auto grid grid-cols-1 gap-6">
-                    {filteredHistory.map(item => (
-                        <ItemCard key={item.id} item={item} isHistory={true} theme={theme} handleDelete={handleDelete} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser}/>
-                    ))}
-                </div>
-                {filteredHistory.length === 0 && <div className="text-center py-20 opacity-30 text-xl">無紀錄</div>}
-            </div>
+          </div>
         </div>
       )}
 
@@ -415,35 +407,26 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 🟢 6. 全螢幕防呆遮罩 */}
+      {/* 全螢幕防呆遮罩 */}
       {isProcessing && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-gray-900 border border-gray-700 p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center flex flex-col items-center animate-in fade-in zoom-in duration-200">
-                
                 {!processError ? (
-                    // 正常處理中
                     <>
                         <Loader2 size={64} className="text-blue-500 animate-spin mb-6" />
                         <h3 className="text-xl font-bold text-white mb-2">正在出售並計算後台數據...</h3>
                         <p className="text-gray-400 text-sm">請勿關閉視窗，正在同步資料庫</p>
                     </>
                 ) : (
-                    // 發生錯誤
                     <>
                         <div className="w-16 h-16 bg-red-900/50 rounded-full flex items-center justify-center mb-6">
                             <AlertTriangle size={40} className="text-red-500" />
                         </div>
                         <h3 className="text-xl font-bold text-white mb-2">系統發生異常！</h3>
                         <p className="text-red-300 text-sm mb-6">已出售過程發生錯誤<br/>請在 Discord Tag Wolf</p>
-                        <button 
-                            onClick={() => setIsProcessing(false)}
-                            className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-bold transition-colors"
-                        >
-                            關閉並重試
-                        </button>
+                        <button onClick={() => setIsProcessing(false)} className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-bold transition-colors"> 關閉並重試 </button>
                     </>
                 )}
-
             </div>
         </div>
       )}
