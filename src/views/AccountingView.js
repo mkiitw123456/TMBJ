@@ -1,6 +1,7 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search } from 'lucide-react';
+// 🟢 引入新圖示 (PackagePlus, List, AlertCircle, ChevronRight)
+import { Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search, PackagePlus, List, AlertCircle, ChevronRight } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { sendLog, sendNotify, sendSoldNotification } from '../utils/helpers';
@@ -9,16 +10,12 @@ import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
 
-// 🟢 1. 寫入用的 API (維持原本的 GAS 連結)
 const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
-
-// 🟢 2. 讀取用的 CSV (已填入您提供的連結)
 const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQtVWCzNdv-0BNV4SMvA8WH6P7IcOi7x11gXqkK53u6aY_eOeFiSMdW9W5UNWkGv_L-IucNVNvl0_5h/pub?output=csv";
 
 const formatNumber = (num) => num?.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') || '';
 const parseNumber = (val) => parseFloat(val?.toString().replace(/,/g, '')) || 0;
 
-// CSV 解析器
 const parseCSVLine = (text) => {
     const result = [];
     let start = 0;
@@ -57,14 +54,24 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
-  // 查詢收益相關狀態
+  // 🟢 新增：物品字典狀態與 Modal
+  const [itemDict, setItemDict] = useState([]);
+  const [isDictModalOpen, setIsDictModalOpen] = useState(false);
+  const [isItemSelectOpen, setIsItemSelectOpen] = useState(false);
+  const [dictForm, setDictForm] = useState({ name: '', source: '', category: '', newSource: '', newCategory: '' });
+  
+  // 🟢 新增：選擇物品面板的篩選狀態
+  const [dictSearch, setDictSearch] = useState('');
+  const [dictFilterSource, setDictFilterSource] = useState('all');
+  const [dictFilterCategory, setDictFilterCategory] = useState('all');
+
   const [isQueryOpen, setIsQueryOpen] = useState(false);
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryResult, setQueryResult] = useState(null);
   const [queryForm, setQueryForm] = useState({
       member: currentUser === '訪客' || currentUser === 'Wolf' ? (members[0]?.name || '') : currentUser,
-      start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0], // 預設月初
-      end: new Date().toISOString().split('T')[0] // 預設今天
+      start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
+      end: new Date().toISOString().split('T')[0]
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -79,7 +86,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
 
-  // Data Fetching
+  // Data Fetching: Active Items
   useEffect(() => {
     if (!db) return;
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
@@ -87,107 +94,118 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return () => unsubActive();
   }, []);
 
+  // 🟢 新增 Data Fetching: Item Dictionary
+  useEffect(() => {
+    if (!db) return;
+    const qDict = query(collection(db, "item_dictionary"), orderBy("name", "asc"));
+    const unsubDict = onSnapshot(qDict, (snap) => setItemDict(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
+    return () => unsubDict();
+  }, []);
+
+  // 🟢 萃取不重複的來源與類別
+  const uniqueSources = useMemo(() => [...new Set(itemDict.map(i => i.source).filter(Boolean))], [itemDict]);
+  const uniqueCategories = useMemo(() => [...new Set(itemDict.map(i => i.category).filter(Boolean))], [itemDict]);
+
+  // 🟢 防內捲比對 (尋找同名且不是自己賣的物品)
+  const currentCompetitors = useMemo(() => {
+    if (!formData.itemName) return [];
+    return activeItems.filter(item => item.itemName === formData.itemName && item.seller !== currentUser);
+  }, [formData.itemName, activeItems, currentUser]);
+
   useEffect(() => { if (isModalOpen) setFormData(prev => ({ ...prev, seller: currentUser })); }, [isModalOpen, currentUser]);
 
   const displayedActiveItems = useMemo(() => {
-    if (filterMode === 'mine') {
-      return activeItems.filter(item => item.seller === currentUser);
-    }
+    if (filterMode === 'mine') return activeItems.filter(item => item.seller === currentUser);
     return activeItems;
   }, [activeItems, filterMode, currentUser]);
 
   const saveToGoogleSheet = async (item, profitOverride = null) => {
     const profit = profitOverride !== null ? profitOverride : (item.finalSplit || 0);
-    let participantsStr = "";
-    if (Array.isArray(item.participants)) {
-        participantsStr = item.participants.map(p => typeof p === 'string' ? p : p.name).join(', ');
-    }
+    let participantsStr = Array.isArray(item.participants) ? item.participants.map(p => typeof p === 'string' ? p : p.name).join(', ') : "";
     const payload = {
-        createdAt: item.createdAt || new Date().toISOString(),
-        seller: item.seller || 'Unknown',
-        itemName: item.itemName || 'Unknown',
-        price: item.price || 0,
-        profit: profit,
-        participants: participantsStr
+        createdAt: item.createdAt || new Date().toISOString(), seller: item.seller || 'Unknown', itemName: item.itemName || 'Unknown',
+        price: item.price || 0, profit: profit, participants: participantsStr
     };
-    try {
-        await fetch(GOOGLE_SHEET_API_URL, {
-            method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(payload)
-        });
+    try { await fetch(GOOGLE_SHEET_API_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
     } catch (e) { console.error("Sheet Sync Error:", e); }
   };
 
-  // 🟢 執行收益查詢 (從 Google Sheet CSV)
   const handleQueryRevenue = async () => {
       if (!GOOGLE_SHEET_CSV_URL) return alert("CSV 網址未設定");
-      setQueryLoading(true);
-      setQueryResult(null);
-      
+      setQueryLoading(true); setQueryResult(null);
       try {
           const response = await fetch(GOOGLE_SHEET_CSV_URL);
           const text = await response.text();
           const rows = text.split('\n').map(line => line.trim()).filter(line => line);
-          
           if (rows.length < 2) throw new Error("無資料");
 
           const headers = parseCSVLine(rows[0]);
-          // 容錯搜尋：尋找包含關鍵字的欄位
           const idxTime = headers.findIndex(h => h.includes('建立時間') || h.includes('Date'));
           const idxSeller = headers.findIndex(h => h.includes('販售人') || h.includes('Seller'));
           const idxPrice = headers.findIndex(h => h.includes('價格') || h.includes('Price'));
           const idxItemName = headers.findIndex(h => h.includes('物品名稱') || h.includes('Item'));
 
-          if (idxTime === -1 || idxSeller === -1 || idxPrice === -1) {
-             throw new Error("CSV 欄位格式不符，請檢查 Google Sheet 標題列");
-          }
+          if (idxTime === -1 || idxSeller === -1 || idxPrice === -1) throw new Error("CSV 欄位格式不符");
 
           const startDate = new Date(queryForm.start);
           const endDate = new Date(queryForm.end);
           endDate.setHours(23, 59, 59);
 
-          let totalSales = 0;
-          let count = 0;
-          const details = [];
-
-          // 從第二行開始遍歷
+          let totalSales = 0; let count = 0; const details = [];
           for (let i = 1; i < rows.length; i++) {
               const cols = parseCSVLine(rows[i]);
               if (cols.length <= idxPrice) continue;
-
               const rowTimeStr = cols[idxTime];
               const rowSeller = cols[idxSeller];
               const rowPrice = parseFloat(cols[idxPrice]) || 0;
               const rowItemName = idxItemName !== -1 ? cols[idxItemName] : '未知物品';
 
               if (!rowTimeStr) continue;
-              
               const rowDate = new Date(rowTimeStr);
-              // 篩選條件：販售人吻合 && 時間在範圍內
               if (rowSeller === queryForm.member && rowDate >= startDate && rowDate <= endDate) {
-                  totalSales += rowPrice;
-                  count++;
-                  details.push({ name: rowItemName, price: rowPrice });
+                  totalSales += rowPrice; count++; details.push({ name: rowItemName, price: rowPrice });
               }
           }
-
-          // 排序取前 5 高價
           details.sort((a, b) => b.price - a.price);
-          const topItems = details.slice(0, 5);
+          setQueryResult({ totalSales, count, topItems: details.slice(0, 5) });
+      } catch (e) { console.error(e); alert("查詢失敗，請檢查 CSV 連結或網路狀態");
+      } finally { setQueryLoading(false); }
+  };
 
-          setQueryResult({ totalSales, count, topItems });
+  // 🟢 處理新增物品至名冊
+  const handleAddDictItem = async () => {
+    if (currentUser === '訪客') return alert("訪客權限不足");
+    const finalSource = dictForm.source === 'NEW' ? dictForm.newSource.trim() : dictForm.source;
+    const finalCategory = dictForm.category === 'NEW' ? dictForm.newCategory.trim() : dictForm.category;
+    const finalName = dictForm.name.trim();
 
-      } catch (e) {
-          console.error(e);
-          alert("查詢失敗，請檢查 CSV 連結或網路狀態");
-      } finally {
-          setQueryLoading(false);
-      }
+    if (!finalName || !finalSource || !finalCategory) return alert("名稱、來源、類別皆為必填！");
+    
+    // 檢查是否重複
+    if (itemDict.some(i => i.name === finalName)) {
+        return alert(`物品 [${finalName}] 已經存在於名冊中了！`);
+    }
+
+    try {
+        await addDoc(collection(db, "item_dictionary"), {
+            name: finalName,
+            source: finalSource,
+            category: finalCategory,
+            createdBy: currentUser,
+            createdAt: new Date().toISOString()
+        });
+        alert(`成功新增物品: ${finalName}`);
+        setIsDictModalOpen(false);
+        setDictForm({ name: '', source: '', category: '', newSource: '', newCategory: '' });
+    } catch (e) {
+        console.error("新增字典失敗", e);
+        alert("新增失敗");
+    }
   };
 
   const handleAddItem = async () => {
     if (currentUser === '訪客') return alert("訪客僅供瀏覽");
-    if (!formData.itemName || !formData.price) return alert("請輸入名稱與價格");
+    if (!formData.itemName || !formData.price) return alert("請選擇物品名稱與輸入價格");
     try {
       const newItem = { ...formData, price: parseNumber(formData.price), cost: parseNumber(formData.cost), createdAt: new Date().toISOString(), listingHistory: [parseNumber(formData.price)] };
       await addDoc(collection(db, "active_items"), newItem);
@@ -214,56 +232,36 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const handleSettleAll = async (item, perPersonAmount) => {
     if (currentUser === '訪客') return alert("訪客權限不足");
-    setIsProcessing(true);
-    setProcessError(false);
-
+    setIsProcessing(true); setProcessError(false);
     const safeParticipants = Array.isArray(item.participants) ? item.participants : [];
-
     try {
       await runTransaction(db, async (transaction) => {
         const gridRef = doc(db, "settlement_data", "main_grid");
         const gridDoc = await transaction.get(gridRef);
         let matrix = gridDoc.exists() ? gridDoc.data().matrix : {};
-
         safeParticipants.forEach(p => {
             const pName = typeof p === 'string' ? p : p.name;
             if (pName && item.seller && pName !== item.seller) {
-                const key = `${item.seller}_${pName}`;
-                const reverseKey = `${pName}_${item.seller}`;
+                const key = `${item.seller}_${pName}`; const reverseKey = `${pName}_${item.seller}`;
                 let debt = matrix[reverseKey] || 0;
-                if (debt >= perPersonAmount) {
-                    matrix[reverseKey] = debt - perPersonAmount;
-                } else {
-                    matrix[reverseKey] = 0;
-                    matrix[key] = (parseFloat(matrix[key]) || 0) + (perPersonAmount - debt);
-                }
+                if (debt >= perPersonAmount) { matrix[reverseKey] = debt - perPersonAmount; } 
+                else { matrix[reverseKey] = 0; matrix[key] = (parseFloat(matrix[key]) || 0) + (perPersonAmount - debt); }
             }
         });
-
         transaction.set(gridRef, { matrix }, { merge: true });
-        
         const historyData = { ...item, settledAt: new Date().toISOString(), finalSplit: perPersonAmount, settledBy: currentUser, listingHistory: item.listingHistory || [] };
         delete historyData.id;
-        
-        // 寫入 Firebase (若您想極致省空間可註解這兩行，但建議留著當備份)
         const newHistoryRef = doc(collection(db, "history_items"));
         transaction.set(newHistoryRef, historyData);
         transaction.delete(doc(db, "active_items", item.id));
       });
-      
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
       sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
       sendSoldNotification(item, currentUser);
-      
-      // 同步到 Google Sheet (重要)
       await saveToGoogleSheet(item, perPersonAmount);
-
       setTimeout(() => { setIsProcessing(false); }, 500);
-    } catch (e) { 
-        console.error(e); 
-        setProcessError(true);
-    }
+    } catch (e) { console.error(e); setProcessError(true); }
   };
 
   const toggleParticipantInForm = (name) => {
@@ -281,6 +279,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   };
   const mainBgClass = isDarkMode ? 'text-gray-100' : 'text-gray-900';
 
+  // 🟢 字典過濾邏輯
+  const filteredDictItems = itemDict.filter(item => {
+      if (dictSearch && !item.name.toLowerCase().includes(dictSearch.toLowerCase())) return false;
+      if (dictFilterSource !== 'all' && item.source !== dictFilterSource) return false;
+      if (dictFilterCategory !== 'all' && item.category !== dictFilterCategory) return false;
+      return true;
+  });
+
   return (
     <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative ${mainBgClass}`}>
       {/* Header Buttons */}
@@ -288,11 +294,16 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
             <Plus size={20}/> 記帳
         </button>
+        
+        {/* 🟢 新增：建立物品按鈕 */}
+        <button onClick={() => setIsDictModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+            <PackagePlus size={20}/> 新增物品
+        </button>
+
         <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
             <Grid size={20}/> 餘額表
         </button>
 
-        {/* 查詢收益按鈕 (取代原本的歷史與同步按鈕) */}
         <div className="flex gap-2">
             <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                 <Search size={20}/> 查詢收益
@@ -326,6 +337,173 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
+      {/* 🟢 物品名冊建檔 Modal */}
+      {isDictModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
+            <div className="flex justify-between items-center mb-6">
+                <h3 className={`text-xl font-bold ${theme.text} flex items-center gap-2`}><PackagePlus size={24}/> 建立新物品</h3>
+                <button onClick={() => setIsDictModalOpen(false)} className={theme.text}><X/></button>
+            </div>
+            <div className="space-y-4 mb-6">
+                <div>
+                    <label className={`block text-xs mb-1 ${theme.subText}`}>物品名稱</label>
+                    <input type="text" className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="例如: 伸缩大劍" value={dictForm.name} onChange={e => setDictForm({...dictForm, name: e.target.value})}/>
+                </div>
+                <div>
+                    <label className={`block text-xs mb-1 ${theme.subText}`}>物品來源</label>
+                    <select className={`w-full p-3 rounded-lg border mb-2 ${theme.input}`} value={dictForm.source} onChange={e => setDictForm({...dictForm, source: e.target.value})}>
+                        <option value="">請選擇來源...</option>
+                        {uniqueSources.map(s => <option key={s} value={s}>{s}</option>)}
+                        <option value="NEW">➕ 自訂新來源...</option>
+                    </select>
+                    {dictForm.source === 'NEW' && (
+                        <input type="text" className={`w-full p-3 rounded-lg border ${theme.input}`} placeholder="輸入新來源名稱" value={dictForm.newSource} onChange={e => setDictForm({...dictForm, newSource: e.target.value})}/>
+                    )}
+                </div>
+                <div>
+                    <label className={`block text-xs mb-1 ${theme.subText}`}>物品類別</label>
+                    <select className={`w-full p-3 rounded-lg border mb-2 ${theme.input}`} value={dictForm.category} onChange={e => setDictForm({...dictForm, category: e.target.value})}>
+                        <option value="">請選擇類別...</option>
+                        {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="NEW">➕ 自訂新類別...</option>
+                    </select>
+                    {dictForm.category === 'NEW' && (
+                        <input type="text" className={`w-full p-3 rounded-lg border ${theme.input}`} placeholder="輸入新類別名稱" value={dictForm.newCategory} onChange={e => setDictForm({...dictForm, newCategory: e.target.value})}/>
+                    )}
+                </div>
+            </div>
+            <div className="flex gap-3">
+                <button onClick={() => setIsDictModalOpen(false)} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button>
+                <button onClick={handleAddDictItem} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-bold">確認建立</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新增記帳 Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className={`w-full max-w-lg rounded-2xl p-6 shadow-2xl ${theme.card}`}>
+            <div className="flex justify-between items-center mb-6">
+                <h3 className={`text-xl font-bold ${theme.text}`}>新增記帳</h3>
+                <button onClick={() => setIsModalOpen(false)} className={theme.text}><X/></button>
+            </div>
+            <div className="space-y-4 mb-6">
+                {/* 🟢 修改：點擊選擇物品按鈕 */}
+                <div>
+                    <label className={`block text-xs mb-1 ${theme.subText}`}>物品名稱</label>
+                    <div 
+                        onClick={() => setIsItemSelectOpen(true)}
+                        className={`w-full p-3 rounded-lg border text-lg flex justify-between items-center cursor-pointer transition-colors ${formData.itemName ? 'border-blue-500 text-blue-400' : theme.input}`}
+                    >
+                        <span>{formData.itemName || '請點擊此處選擇物品...'}</span>
+                        <ChevronRight size={20} className="opacity-50" />
+                    </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div><label className={`block text-xs mb-1 ${theme.subText}`}>售價 (含稅)</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.price} onChange={val => setFormData({...formData, price: val})}/></div>
+                    <div><label className={`block text-xs mb-1 ${theme.subText}`}>額外成本</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.cost} onChange={val => setFormData({...formData, cost: val})}/></div>
+                </div>
+                <div><label className={`block text-xs mb-1 ${theme.subText}`}>交易所類型</label><select className={`w-full p-3 rounded-lg border ${theme.input}`} value={formData.exchangeType} onChange={e => setFormData({...formData, exchangeType: e.target.value})}>{Object.entries(EXCHANGE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
+            </div>
+            <div className="mb-4">
+                <div className="flex justify-between items-center mb-2"><label className={`text-xs ${theme.subText}`}>分紅參與者</label><button onClick={() => setFormData({...formData, participants: []})} className="text-xs text-blue-500 hover:underline">清空</button></div>
+                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                    {memberNames.map(m => (<button key={m} onClick={() => toggleParticipantInForm(m)} className={`px-3 py-1 rounded-full text-xs border ${formData.participants.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-500 text-gray-500'}`}>{m}</button>))}
+                </div>
+            </div>
+
+            {/* 🟢 新增：防內捲提示區塊 */}
+            {formData.itemName && currentCompetitors.length > 0 && (
+                <div className="mb-6 p-3 bg-orange-900/30 border border-orange-500/50 rounded-lg animate-in fade-in zoom-in">
+                    <p className="text-orange-400 text-xs font-bold flex items-center gap-1 mb-2">
+                        <AlertCircle size={14} /> 團隊成員掛賣中 (避免過度壓價)
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        {currentCompetitors.map(c => (
+                            <div key={c.id} className="text-xs bg-black/40 px-2 py-1.5 rounded flex items-center gap-2 border border-white/5 shadow-sm">
+                                <span className="text-gray-300">{c.seller}</span>
+                                <span className="text-orange-300 font-mono font-bold">${formatNumber(c.price)}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div className="flex gap-3">
+                <button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button>
+                <button onClick={handleAddItem} className="flex-1 py-3 bg-blue-600 rounded-lg text-white font-bold">建立項目</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🟢 物品選擇器面板 (蓋在原本的 Modal 之上) */}
+      {isItemSelectOpen && (
+        <div className="fixed inset-0 bg-black/80 flex flex-col p-4 z-[60] backdrop-blur-md animate-in slide-in-from-bottom-4">
+            <div className={`w-full max-w-2xl mx-auto rounded-2xl shadow-2xl flex flex-col h-full max-h-[90vh] ${theme.card}`}>
+                {/* 標頭 */}
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center shrink-0">
+                    <h3 className={`text-xl font-bold ${theme.text} flex items-center gap-2`}><List size={24}/> 選擇物品</h3>
+                    <button onClick={() => setIsItemSelectOpen(false)} className={`p-2 rounded-full hover:bg-white/10 ${theme.text}`}><X/></button>
+                </div>
+                
+                {/* 搜尋與篩選器 */}
+                <div className="p-4 border-b border-gray-700 bg-black/10 shrink-0 space-y-3">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-3 text-gray-500" size={18} />
+                        <input type="text" placeholder="輸入關鍵字搜尋物品..." className={`w-full pl-10 p-2.5 rounded-lg border ${theme.input}`} value={dictSearch} onChange={e => setDictSearch(e.target.value)} />
+                    </div>
+                    <div className="flex gap-3">
+                        <div className="flex-1">
+                            <label className={`block text-xs mb-1 ${theme.subText}`}>來源篩選</label>
+                            <select className={`w-full p-2 rounded-lg border text-sm ${theme.input}`} value={dictFilterSource} onChange={e => setDictFilterSource(e.target.value)}>
+                                <option value="all">所有來源</option>
+                                {uniqueSources.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex-1">
+                            <label className={`block text-xs mb-1 ${theme.subText}`}>類別篩選</label>
+                            <select className={`w-full p-2 rounded-lg border text-sm ${theme.input}`} value={dictFilterCategory} onChange={e => setDictFilterCategory(e.target.value)}>
+                                <option value="all">所有類別</option>
+                                {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 物品清單 */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
+                    {filteredDictItems.length === 0 ? (
+                        <div className="text-center py-20 opacity-50 flex flex-col items-center">
+                            <PackagePlus size={48} className="mb-4 opacity-30" />
+                            <p>找不到符合條件的物品</p>
+                            <button onClick={() => { setIsItemSelectOpen(false); setIsDictModalOpen(true); }} className="mt-4 text-blue-400 hover:underline">去「新增物品」建立一個吧！</button>
+                        </div>
+                    ) : (
+                        filteredDictItems.map(item => (
+                            <div 
+                                key={item.id} 
+                                onClick={() => { setFormData({...formData, itemName: item.name}); setIsItemSelectOpen(false); }}
+                                className={`p-4 rounded-xl border flex justify-between items-center cursor-pointer transition-all hover:scale-[1.01] active:scale-95 ${isDarkMode ? 'bg-gray-800 border-gray-700 hover:border-blue-500' : 'bg-white border-gray-200 hover:border-blue-500'}`}
+                            >
+                                <div>
+                                    <h4 className={`text-lg font-bold mb-1 ${theme.text}`}>{item.name}</h4>
+                                    <div className="flex gap-2">
+                                        <span className="text-xs bg-indigo-900/40 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30">{item.source}</span>
+                                        <span className="text-xs bg-teal-900/40 text-teal-300 px-2 py-0.5 rounded border border-teal-500/30">{item.category}</span>
+                                    </div>
+                                </div>
+                                <ChevronRight className="opacity-30" />
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* 收益查詢 Modal */}
       {isQueryOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
@@ -353,16 +531,11 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                     </div>
                 </div>
 
-                <button 
-                    onClick={handleQueryRevenue} 
-                    disabled={queryLoading}
-                    className="w-full py-3 bg-teal-600 hover:bg-teal-500 rounded-lg text-white font-bold flex items-center justify-center gap-2"
-                >
+                <button onClick={handleQueryRevenue} disabled={queryLoading} className="w-full py-3 bg-teal-600 hover:bg-teal-500 rounded-lg text-white font-bold flex items-center justify-center gap-2">
                     {queryLoading ? <Loader2 className="animate-spin" size={20}/> : <Search size={20}/>}
                     {queryLoading ? '資料讀取中...' : '開始查詢'}
                 </button>
 
-                {/* 查詢結果區塊 */}
                 {queryResult && (
                     <div className="mt-4 p-4 rounded-xl bg-black/20 border border-white/10 animate-in fade-in zoom-in">
                         <div className="text-center mb-4">
@@ -384,28 +557,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                     </div>
                 )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Item Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className={`w-full max-w-lg rounded-2xl p-6 shadow-2xl ${theme.card}`}>
-            <div className="flex justify-between items-center mb-6">
-                <h3 className={`text-xl font-bold ${theme.text}`}>新增記帳</h3>
-                <button onClick={() => setIsModalOpen(false)} className={theme.text}><X/></button>
-            </div>
-            <div className="space-y-4 mb-6">
-                <div><label className={`block text-xs mb-1 ${theme.subText}`}>物品名稱</label><input type="text" className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="例如: 伸缩大劍" value={formData.itemName} onChange={e => setFormData({...formData, itemName: e.target.value})}/></div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div><label className={`block text-xs mb-1 ${theme.subText}`}>售價 (含稅)</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.price} onChange={val => setFormData({...formData, price: val})}/></div>
-                    <div><label className={`block text-xs mb-1 ${theme.subText}`}>額外成本</label><MoneyInput className={`w-full p-3 rounded-lg border text-lg ${theme.input}`} placeholder="0" value={formData.cost} onChange={val => setFormData({...formData, cost: val})}/></div>
-                </div>
-                <div><label className={`block text-xs mb-1 ${theme.subText}`}>交易所類型</label><select className={`w-full p-3 rounded-lg border ${theme.input}`} value={formData.exchangeType} onChange={e => setFormData({...formData, exchangeType: e.target.value})}>{Object.entries(EXCHANGE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></div>
-            </div>
-            <div className="mb-6"><div className="flex justify-between items-center mb-2"><label className={`text-xs ${theme.subText}`}>分紅參與者</label><button onClick={() => setFormData({...formData, participants: []})} className="text-xs text-blue-500 hover:underline">清空</button></div><div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">{memberNames.map(m => (<button key={m} onClick={() => toggleParticipantInForm(m)} className={`px-3 py-1 rounded-full text-xs border ${formData.participants.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-500 text-gray-500'}`}>{m}</button>))}</div></div>
-            <div className="flex gap-3"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button><button onClick={handleAddItem} className="flex-1 py-3 bg-blue-600 rounded-lg text-white font-bold">建立項目</button></div>
           </div>
         </div>
       )}
