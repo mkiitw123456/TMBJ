@@ -167,7 +167,7 @@ const App = () => {
                 <LayoutDashboard size={24} className="text-white" />
               </div>
               <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400 hidden sm:block">
-                 天魔鏢局 團隊系統
+                 Aion2帳務 網頁系統
               </h1>
               {/* 顯示當前版本號 (Optional) */}
               <span className="text-[10px] bg-white/10 px-1.5 rounded text-gray-400 font-mono hidden sm:block">
