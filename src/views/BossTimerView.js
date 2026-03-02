@@ -1,16 +1,22 @@
 // src/views/BossTimerView.js
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Clock, Loader2, Globe, Image as ImageIcon, Sparkles, AlertCircle, Settings, X, Trash2
+  Clock, Loader2, Globe, Image as ImageIcon, Sparkles, AlertCircle, Settings, X, Trash2, ArrowDown
 } from 'lucide-react';
-import { collection, deleteDoc, doc, onSnapshot, query, orderBy, addDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, query, orderBy, addDoc, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { formatTimeWithSeconds, formatTimeOnly } from '../utils/helpers';
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
-// 🔴 請填入您的 API Key (已更新為 2.5 Flash)
+// 🟢 讀取環境變數中的 API Key
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+// 取得台灣時間的「今天日期」字串 (YYYY-MM-DD)
+const getTaiwanDateStr = () => {
+    const d = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
 
 const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   // === Data States ===
@@ -25,8 +31,9 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   // === AI 圖片分析狀態 ===
   const [pastedImage, setPastedImage] = useState(null); 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState("");
+  const [parsedNodes, setParsedNodes] = useState([]); // 存放圖像化的節點陣列
   const [analysisError, setAnalysisError] = useState("");
+  const [quotaLeft, setQuotaLeft] = useState(5); // 本日剩餘次數
 
   // === Timeline Modal States ===
   const [isTimelineSettingsOpen, setIsTimelineSettingsOpen] = useState(false);
@@ -34,12 +41,12 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   const [timelineRecordForm, setTimelineRecordForm] = useState({ typeId: '', deathDate: '', deathTime: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 乾淨的成員名單 (給掛賣建議用)
+  // 乾淨的成員名單
   const filteredMembers = useMemo(() => {
     return members.filter(m => m.hideFromAccounting !== true);
   }, [members]);
 
-  // === Data Fetching ===
+  // === Data Fetching (包含配額監聽) ===
   useEffect(() => {
     if (!db) return;
     const q3 = query(collection(db, "timeline_types"), orderBy("interval"));
@@ -47,7 +54,23 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
     const q4 = query(collection(db, "timeline_records"), orderBy("deathTimestamp", "desc"));
     const unsub4 = onSnapshot(q4, snap => setTimelineRecords(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
 
-    return () => { unsub3(); unsub4(); };
+    // 監聽 AI 使用配額
+    const quotaRef = doc(db, "system_settings", "gemini_quota");
+    const unsubQuota = onSnapshot(quotaRef, (docSnap) => {
+        const todayStr = getTaiwanDateStr();
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.date === todayStr) {
+                setQuotaLeft(Math.max(0, 5 - data.count));
+            } else {
+                setQuotaLeft(5); // 換日自動刷新
+            }
+        } else {
+            setQuotaLeft(5);
+        }
+    });
+
+    return () => { unsub3(); unsub4(); unsubQuota(); };
   }, []);
 
   // 網路時間校正
@@ -82,6 +105,7 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   // ==========================================
   useEffect(() => {
     const handlePaste = async (e) => {
+        if (isAnalyzing) return; // 分析中禁止貼上
         const items = e.clipboardData?.items;
         if (!items) return;
 
@@ -92,60 +116,84 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
                 reader.onload = (event) => {
                     const base64Data = event.target.result;
                     setPastedImage(base64Data);
-                    analyzeImageWithGemini(base64Data); // 自動開始分析
+                    analyzeImageWithGemini(base64Data);
                 };
                 reader.readAsDataURL(blob);
-                break; // 只抓第一張圖
+                break;
             }
         }
     };
 
     window.addEventListener("paste", handlePaste);
     return () => window.removeEventListener("paste", handlePaste);
-  }, []);
+  }, [isAnalyzing, quotaLeft]);
 
   // ==========================================
-  // 🟢 Gemini API 圖片分析核心邏輯 (已修復 MIME Type 問題)
+  // 🟢 解析字串轉換為陣列 (圖像化前置作業)
+  // ==========================================
+  const parseAnalysisResult = (text) => {
+      const parts = text.split('>').map(s => s.trim()).filter(Boolean);
+      const nodes = [];
+      
+      parts.forEach((part) => {
+          if (part.includes('間隔')) {
+              // 萃取分鐘與秒數
+              const minMatch = part.match(/(\d+)分/);
+              const secMatch = part.match(/(\d+)秒/);
+              const m = minMatch ? parseInt(minMatch[1]) : 0;
+              const s = secMatch ? parseInt(secMatch[1]) : 0;
+              const totalSeconds = m * 60 + s;
+              
+              nodes.push({ 
+                  type: 'interval', 
+                  text: part.replace('間隔', '').trim(), 
+                  seconds: totalSeconds 
+              });
+          } else {
+              nodes.push({ type: 'boss', name: part });
+          }
+      });
+      return nodes;
+  };
+
+  // ==========================================
+  // 🟢 Gemini API 圖片分析核心邏輯
   // ==========================================
   const analyzeImageWithGemini = async (base64String) => {
-      if (GEMINI_API_KEY.includes("請填入")) {
-          setAnalysisError("尚未設定 Gemini API Key，請至程式碼中修改。");
+      if (!GEMINI_API_KEY) {
+          setAnalysisError("尚未設定 Gemini API Key，請檢查您的 .env 設定檔。");
+          return;
+      }
+
+      if (quotaLeft <= 0) {
+          setAnalysisError("今日伺服器免費額度 (5/5) 已耗盡，請於明日再試。");
           return;
       }
 
       setIsAnalyzing(true);
-      setAnalysisResult("");
+      setParsedNodes([]);
       setAnalysisError("");
 
       try {
-          // 動態抓取圖片格式 (解決 PNG/JPEG 導致的 400 錯誤)
           const mimeType = base64String.substring(base64String.indexOf(":") + 1, base64String.indexOf(";"));
           const base64Data = base64String.split(',')[1];
 
-          // 嚴格的 Prompt 提示詞 (要求精準計算間隔)
           const promptText = `
           這是一張遊戲 Boss 剩餘時間的截圖。請嚴格執行以下步驟：
           1. 辨識所有 Boss 的名稱與剩餘時間。
           2. 絕對要排除（忽略）「舒札坎」與「哈迪倫」這兩隻 Boss。
           3. 將剩下的 Boss 依照剩餘時間由少到多進行排序。
           4. 計算排序後，相鄰兩隻 Boss 之間的「剩餘時間差異（時間間隔）」。
-          5. 請直接以下列的格式輸出，**絕對不要包含任何前言、解釋或Markdown語法**：
+          5. 請直接以下列的格式輸出，請確保時間間隔的格式包含「間隔」兩字，且不要包含任何前言、Markdown語法：
           
           BossA名稱 > 間隔 X分Y秒 > BossB名稱 > 間隔 X分Y秒 > BossC名稱
-
-          確保時間計算精準！如果只有一隻 Boss，直接輸出該 Boss 名稱。
           `;
 
           const response = await fetch(GEMINI_API_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                  contents: [{
-                      parts: [
-                          { text: promptText },
-                          { inline_data: { mime_type: mimeType, data: base64Data } }
-                      ]
-                  }]
+                  contents: [{ parts: [ { text: promptText }, { inline_data: { mime_type: mimeType, data: base64Data } } ] }]
               })
           });
 
@@ -155,9 +203,25 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
           }
 
           const data = await response.json();
-          const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "無法解析回傳結果";
+          const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
           
-          setAnalysisResult(reply.trim());
+          if (!reply) throw new Error("無法解析回傳結果");
+
+          // 成功後才扣除配額 (Transaction)
+          const quotaRef = doc(db, "system_settings", "gemini_quota");
+          const todayStr = getTaiwanDateStr();
+          
+          await runTransaction(db, async (transaction) => {
+              const docSnap = await transaction.get(quotaRef);
+              let currentCount = 0;
+              if (docSnap.exists() && docSnap.data().date === todayStr) {
+                  currentCount = docSnap.data().count;
+              }
+              transaction.set(quotaRef, { date: todayStr, count: currentCount + 1 }, { merge: true });
+          });
+
+          // 解析字串轉換為 UI 節點
+          setParsedNodes(parseAnalysisResult(reply));
 
       } catch (error) {
           console.error(error);
@@ -237,22 +301,27 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* Main Content (分兩大區塊) */}
+      {/* Main Content */}
       <div className="flex flex-col lg:flex-row gap-4 h-full overflow-hidden">
         
-        {/* 左側：掛賣建議 (保留) */}
+        {/* 左側：掛賣建議 */}
         <div className="w-full lg:w-1/4 rounded-xl p-0 flex flex-col border border-white/10 h-full backdrop-blur-sm overflow-hidden" style={{ background: 'var(--card-bg)' }}>
             <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
         </div>
 
-        {/* 右側：Gemini 圖片分析區塊 (新增) */}
+        {/* 右側：Gemini 圖像化分析區塊 */}
         <div className="w-full lg:w-3/4 rounded-xl flex flex-col border border-white/10 h-full backdrop-blur-sm overflow-hidden relative" style={{ background: 'var(--sidebar-bg)' }}>
             
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/20">
                 <h3 className="font-bold text-lg flex items-center gap-2 text-blue-400">
                     <Sparkles size={20}/> Gemini 智慧排序器
                 </h3>
-                <span className="text-xs opacity-60 bg-black/40 px-2 py-1 rounded border border-white/10">直接在此頁面按下 Ctrl+V 貼上圖片</span>
+                <div className="flex items-center gap-3">
+                    <span className={`text-xs font-bold px-3 py-1 rounded border ${quotaLeft > 0 ? 'bg-green-900/30 text-green-400 border-green-500/50' : 'bg-red-900/30 text-red-400 border-red-500/50'}`}>
+                        本日剩餘次數: {quotaLeft} / 5
+                    </span>
+                    <span className="text-xs opacity-60 bg-black/40 px-2 py-1 rounded border border-white/10 hidden md:block">直接按下 Ctrl+V 貼上圖片</span>
+                </div>
             </div>
 
             <div className="flex-1 p-6 flex flex-col md:flex-row gap-6 overflow-y-auto custom-scrollbar">
@@ -269,22 +338,16 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
                                 <p>點擊網頁任意處並按下 Ctrl+V</p>
                             </div>
                         )}
-                        {/* 懸浮提示 */}
-                        {pastedImage && (
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <span className="text-white font-bold bg-black/50 px-4 py-2 rounded-lg">再次 Ctrl+V 可覆蓋圖片</span>
-                            </div>
-                        )}
                     </div>
                 </div>
 
-                {/* 分析結果區 */}
+                {/* 🟢 分析結果區 (圖像化流程圖) */}
                 <div className="w-full md:w-1/2 flex flex-col gap-2">
                     <p className="text-sm opacity-70 font-bold flex items-center gap-2">
                         2. 分析結果
                         {isAnalyzing && <Loader2 size={14} className="animate-spin text-blue-400" />}
                     </p>
-                    <div className="flex-1 min-h-[300px] border border-gray-700 rounded-xl bg-gray-900/50 p-6 flex flex-col justify-start overflow-y-auto">
+                    <div className="flex-1 min-h-[300px] border border-gray-700 rounded-xl bg-gray-900/50 p-6 flex flex-col justify-start overflow-y-auto custom-scrollbar">
                         
                         {!pastedImage && !isAnalyzing && (
                             <div className="h-full flex flex-col items-center justify-center opacity-30 text-sm">
@@ -307,20 +370,42 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
                             </div>
                         )}
 
-                        {analysisResult && !isAnalyzing && !analysisError && (
-                            <div className="text-xl leading-relaxed whitespace-pre-wrap font-bold text-green-300">
-                                {analysisResult}
+                        {/* 圖像化節點渲染 */}
+                        {parsedNodes.length > 0 && !isAnalyzing && !analysisError && (
+                            <div className="flex flex-col items-center py-4 animate-in fade-in zoom-in duration-300">
+                                {parsedNodes.map((node, i) => {
+                                    if (node.type === 'boss') {
+                                        // 👑 Boss 節點
+                                        return (
+                                            <div key={i} className="bg-gray-800 border-2 border-gray-600 px-6 py-3 rounded-xl shadow-lg text-white font-bold text-lg min-w-[220px] text-center z-10 hover:border-blue-400 hover:bg-gray-700 transition-colors">
+                                                {node.name}
+                                            </div>
+                                        );
+                                    } else {
+                                        // ⏳ 間隔時間節點
+                                        const isUrgent = node.seconds <= 20;
+                                        return (
+                                            <div key={i} className="flex flex-col items-center my-1 z-0">
+                                                <div className="w-1 h-4 bg-gray-600"></div>
+                                                <div className={`px-4 py-1.5 rounded-full text-sm font-bold border-2 flex items-center gap-2 shadow-md ${isUrgent ? 'bg-red-900 text-white border-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.8)]' : 'bg-gray-900 text-blue-300 border-gray-600'}`}>
+                                                    <Clock size={14} className={isUrgent ? "animate-spin-slow" : ""} /> 
+                                                    {node.text}
+                                                </div>
+                                                <div className="w-1 h-4 bg-gray-600"></div>
+                                                <ArrowDown size={16} className="text-gray-600 -mt-1" />
+                                            </div>
+                                        );
+                                    }
+                                })}
                             </div>
                         )}
-
                     </div>
                 </div>
             </div>
-
         </div>
       </div>
 
-      {/* Timeline Settings Modal (給您保留了新增時間線標記的彈出視窗) */}
+      {/* Timeline Settings Modal (保留) */}
       {isTimelineSettingsOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[999]">
           <div className={`w-full max-w-2xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[85vh]`} style={{ background: 'var(--card-bg)' }}> 
