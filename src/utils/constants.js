@@ -22,8 +22,6 @@ export const MEMBERS = [
   "水野", 
   "vina", 
   "Avalon", 
-  "Ricky", 
-  "五十嵐", 
   "水月", 
   "UBS"
 ];
