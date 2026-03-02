@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Clock, Settings, Loader2, Globe, Image as ImageIcon, Sparkles, AlertCircle
 } from 'lucide-react';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection,deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { formatTimeWithSeconds, formatTimeOnly } from '../utils/helpers';
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
@@ -31,9 +31,6 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
 
   // === Modal States ===
   const [isTimelineSettingsOpen, setIsTimelineSettingsOpen] = useState(false);
-  const [timelineTypeForm, setTimelineTypeForm] = useState({ name: '', interval: 60, color: '#FF5733' });
-  const [timelineRecordForm] = useState({ typeId: '', deathDate: '', deathTime: '' });
-  const [setIsSubmitting] = useState(false);
 
   // 乾淨的成員名單 (給掛賣建議用)
   const filteredMembers = useMemo(() => {
