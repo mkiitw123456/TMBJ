@@ -1,16 +1,15 @@
 // src/views/BossTimerView.js
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Clock, Settings, Loader2, Globe, Image as ImageIcon, Sparkles, AlertCircle
+  Clock, Loader2, Globe, Image as ImageIcon, Sparkles, AlertCircle, Settings, X, Trash2
 } from 'lucide-react';
-import { collection,deleteDoc, doc, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, query, orderBy, addDoc } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { formatTimeWithSeconds, formatTimeOnly } from '../utils/helpers';
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
-// 🔴 請在這裡填入您的 Gemini API Key
+// 🔴 請填入您的 API Key (已更新為 2.5 Flash)
 const GEMINI_API_KEY = "AIzaSyBudypZLiYOGXdhKjLOWvGOx5XuUdzon0c";
-// 備註：目前 Google 最新普遍可用版本為 gemini-2.0-flash 或 1.5-flash。若您確定有 2.5 的權限，可更改下方網址中的模型名稱。
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
@@ -24,13 +23,16 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isTimeSynced, setIsTimeSynced] = useState(false);
 
   // === AI 圖片分析狀態 ===
-  const [pastedImage, setPastedImage] = useState(null); // 存放 base64 圖片
+  const [pastedImage, setPastedImage] = useState(null); 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState("");
   const [analysisError, setAnalysisError] = useState("");
 
-  // === Modal States ===
+  // === Timeline Modal States ===
   const [isTimelineSettingsOpen, setIsTimelineSettingsOpen] = useState(false);
+  const [timelineTypeForm, setTimelineTypeForm] = useState({ name: '', interval: 60, color: '#FF5733' });
+  const [timelineRecordForm, setTimelineRecordForm] = useState({ typeId: '', deathDate: '', deathTime: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 乾淨的成員名單 (給掛賣建議用)
   const filteredMembers = useMemo(() => {
@@ -103,7 +105,7 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   }, []);
 
   // ==========================================
-  // 🟢 Gemini API 圖片分析核心邏輯
+  // 🟢 Gemini API 圖片分析核心邏輯 (已修復 MIME Type 問題)
   // ==========================================
   const analyzeImageWithGemini = async (base64String) => {
       if (GEMINI_API_KEY.includes("請填入")) {
@@ -116,19 +118,22 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
       setAnalysisError("");
 
       try {
-          // 移除 "data:image/jpeg;base64," 前綴，API 只需要純 base64 編碼
+          // 動態抓取圖片格式 (解決 PNG/JPEG 導致的 400 錯誤)
+          const mimeType = base64String.substring(base64String.indexOf(":") + 1, base64String.indexOf(";"));
           const base64Data = base64String.split(',')[1];
 
-          // 嚴格的 Prompt 提示詞
+          // 嚴格的 Prompt 提示詞 (要求精準計算間隔)
           const promptText = `
           這是一張遊戲 Boss 剩餘時間的截圖。請嚴格執行以下步驟：
           1. 辨識所有 Boss 的名稱與剩餘時間。
           2. 絕對要排除（忽略）「舒札坎」與「哈迪倫」這兩隻 Boss。
           3. 將剩下的 Boss 依照剩餘時間由少到多進行排序。
-          4. 計算相鄰兩隻 Boss 之間的「剩餘時間差異（時間間隔）」。
+          4. 計算排序後，相鄰兩隻 Boss 之間的「剩餘時間差異（時間間隔）」。
           5. 請直接以下列的格式輸出，**絕對不要包含任何前言、解釋或Markdown語法**：
           
           BossA名稱 > 間隔 X分Y秒 > BossB名稱 > 間隔 X分Y秒 > BossC名稱
+
+          確保時間計算精準！如果只有一隻 Boss，直接輸出該 Boss 名稱。
           `;
 
           const response = await fetch(GEMINI_API_URL, {
@@ -138,14 +143,15 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
                   contents: [{
                       parts: [
                           { text: promptText },
-                          { inline_data: { mime_type: "image/jpeg", data: base64Data } }
+                          { inline_data: { mime_type: mimeType, data: base64Data } }
                       ]
                   }]
               })
           });
 
           if (!response.ok) {
-              throw new Error(`API 請求失敗 (狀態碼: ${response.status})`);
+              const errData = await response.json();
+              throw new Error(errData.error?.message || `API 請求失敗 (狀態碼: ${response.status})`);
           }
 
           const data = await response.json();
@@ -155,13 +161,16 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
 
       } catch (error) {
           console.error(error);
-          setAnalysisError("分析失敗，請確認 API Key 是否正確或圖片是否過大。");
+          setAnalysisError(`分析失敗: ${error.message}`);
       } finally {
           setIsAnalyzing(false);
       }
   };
 
-  // === Timeline Logic (保持不變) ===
+  // === Timeline Logic ===
+  const handleAddTimelineType = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineTypeForm.name || timelineTypeForm.interval <= 0) return alert("資料不完整"); setIsSubmitting(true); try { await addDoc(collection(db, "timeline_types"), timelineTypeForm); setTimelineTypeForm({ name: '', interval: 60, color: '#FF5733' }); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
+  const handleDeleteTimelineType = async (id) => { if (currentUser === '訪客') return; if(window.confirm("確定刪除此設定？")) await deleteDoc(doc(db, "timeline_types", id)); };
+  const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineRecord = async (id) => { if (currentUser === '訪客') return; if(window.confirm("刪除此紀錄？")) await deleteDoc(doc(db, "timeline_records", id)); };
 
   const calculate2DayMarkers = () => { const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0); const totalDuration = 48 * 60 * 60 * 1000; const endOfTomorrow = new Date(startOfToday.getTime() + totalDuration); let rawMarkers = []; timelineRecords.forEach(record => { const type = timelineTypes.find(t => t.id === record.typeId); if (!type) return; const intervalMs = type.interval * 60 * 1000; let checkTime = record.deathTimestamp; if (checkTime < startOfToday.getTime()) { const diff = startOfToday.getTime() - checkTime; const jumps = Math.floor(diff / intervalMs); checkTime += jumps * intervalMs; } while (checkTime <= endOfTomorrow.getTime() + intervalMs) { if (checkTime >= startOfToday.getTime() && checkTime <= endOfTomorrow.getTime()) { const current = new Date(checkTime); const offsetMs = checkTime - startOfToday.getTime(); const percent = (offsetMs / totalDuration) * 100; rawMarkers.push({ id: record.id + '_' + checkTime, percent, time: formatTimeOnly(current), color: type.color, name: type.name, originalRecordId: record.id, interval: type.interval }); } checkTime += intervalMs; } }); rawMarkers.sort((a, b) => a.percent - b.percent); const levels = [ -10, -10, -10, -10 ]; return rawMarkers.map(marker => { let assignedLevel = 0; for (let i = 0; i < levels.length; i++) { if (marker.percent > levels[i] + 1.5) { assignedLevel = i; levels[i] = marker.percent; break; } if (i === levels.length - 1) { assignedLevel = 0; levels[0] = marker.percent; } } return { ...marker, level: assignedLevel }; }); };
@@ -174,7 +183,7 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   const currentPercent = Math.max(0, Math.min(100, (currentOffset / totalDuration) * 100));
   const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
   
-  
+  const theme = { text: 'text-[var(--app-text)]', subText: 'opacity-60', input: isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800' };
   const formatDateSimple = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
 
   return (
@@ -243,7 +252,7 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
                 <h3 className="font-bold text-lg flex items-center gap-2 text-blue-400">
                     <Sparkles size={20}/> Gemini 智慧排序器
                 </h3>
-                <span className="text-xs opacity-60 bg-black/40 px-2 py-1 rounded">可直接在此頁面按下 Ctrl+V 貼上圖片</span>
+                <span className="text-xs opacity-60 bg-black/40 px-2 py-1 rounded border border-white/10">直接在此頁面按下 Ctrl+V 貼上圖片</span>
             </div>
 
             <div className="flex-1 p-6 flex flex-col md:flex-row gap-6 overflow-y-auto custom-scrollbar">
@@ -299,7 +308,7 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
                         )}
 
                         {analysisResult && !isAnalyzing && !analysisError && (
-                            <div className="text-lg leading-relaxed whitespace-pre-wrap font-mono text-green-300">
+                            <div className="text-xl leading-relaxed whitespace-pre-wrap font-bold text-green-300">
                                 {analysisResult}
                             </div>
                         )}
@@ -311,15 +320,53 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       </div>
 
-      {/* Timeline Settings Modal */}
+      {/* Timeline Settings Modal (給您保留了新增時間線標記的彈出視窗) */}
       {isTimelineSettingsOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[999]">
-          {/* ... 請保留原本 Timeline Settings 的 Modal 內容 (未改動) ... */}
           <div className={`w-full max-w-2xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[85vh]`} style={{ background: 'var(--card-bg)' }}> 
-             {/* 此處因篇幅省略，請保留您原本的這塊 Modal */}
              <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
-                 <h3 className="font-bold text-xl flex items-center gap-2">時間線設定 (請保留原本代碼)</h3>
-                 <button onClick={()=>setIsTimelineSettingsOpen(false)}>關閉</button>
+                 <h3 className="font-bold text-xl flex items-center gap-2"><Settings size={20}/> 時間線設定</h3>
+                 <button onClick={()=>setIsTimelineSettingsOpen(false)}><X size={24}/></button>
+             </div>
+             <div className="flex gap-6 h-full overflow-hidden">
+                <div className="flex-1 flex flex-col border-r border-white/10 pr-6">
+                    <h4 className="font-bold text-sm mb-3 text-orange-400">1. 設定標記類別</h4>
+                    <div className="space-y-3 mb-4">
+                        <div className="grid grid-cols-2 gap-2">
+                            <input type="text" placeholder="名稱" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.name} onChange={e=>setTimelineTypeForm({...timelineTypeForm, name: e.target.value})}/>
+                            <input type="number" placeholder="週期(分)" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.interval} onChange={e=>setTimelineTypeForm({...timelineTypeForm, interval: Number(e.target.value)})}/>
+                        </div>
+                        <div className="flex gap-2">
+                            <input type="color" className="h-9 w-full rounded cursor-pointer" value={timelineTypeForm.color} onChange={e=>setTimelineTypeForm({...timelineTypeForm, color: e.target.value})}/>
+                            <button onClick={handleAddTimelineType} disabled={isSubmitting} className="whitespace-nowrap px-4 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-500">新增</button>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
+                        {timelineTypes.map(t => (
+                            <div key={t.id} className="flex justify-between items-center text-xs p-2 rounded bg-black/20 hover:bg-black/30">
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor: t.color}}></div><span>{t.name} ({t.interval}m)</span></div>
+                                <button onClick={()=>handleDeleteTimelineType(t.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14}/></button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="flex-1 flex flex-col">
+                    <h4 className="font-bold text-sm mb-3 text-blue-400">2. 放上標記點</h4>
+                    <div className="space-y-3">
+                        <select className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.typeId} onChange={e=>setTimelineRecordForm({...timelineRecordForm, typeId: e.target.value})}>
+                            <option value="">選擇類別...</option>
+                            {timelineTypes.map(t => <option key={t.id} value={t.id} style={{color: 'black'}}>{t.name}</option>)}
+                        </select>
+                        <div className="grid grid-cols-2 gap-2">
+                            <input type="date" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathDate} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathDate: e.target.value})}/>
+                            <input type="time" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathTime} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathTime: e.target.value})}/>
+                        </div>
+                        <button onClick={handleAddTimelineRecord} disabled={isSubmitting} className="w-full py-2 bg-orange-600 text-white rounded font-bold hover:bg-orange-500 flex justify-center gap-2">
+                            {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : '建立標記'}
+                        </button>
+                    </div>
+                    <div className="mt-auto pt-4 text-xs opacity-50">* 此時間線與下方列表獨立運作，用於特定週期監控。</div>
+                </div>
              </div>
           </div>
         </div>
