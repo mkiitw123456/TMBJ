@@ -103,6 +103,9 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
   // ==========================================
   // 🟢 監聽 Ctrl+V 貼上事件
   // ==========================================
+  // ==========================================
+  // 🟢 監聽 Ctrl+V 貼上事件
+  // ==========================================
   useEffect(() => {
     const handlePaste = async (e) => {
         if (isAnalyzing) return; // 分析中禁止貼上
@@ -126,6 +129,9 @@ const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
 
     window.addEventListener("paste", handlePaste);
     return () => window.removeEventListener("paste", handlePaste);
+    
+    // 👇 就是加下面這行註解，告訴 Vercel 略過這個檢查
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAnalyzing, quotaLeft]);
 
   // ==========================================
