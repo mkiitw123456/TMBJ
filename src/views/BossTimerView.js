@@ -9,7 +9,7 @@ import { formatTimeWithSeconds, formatTimeOnly } from '../utils/helpers';
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 // 🔴 請填入您的 API Key (已更新為 2.5 Flash)
-const GEMINI_API_KEY = "AIzaSyB6I5QT1J2v1B93JDK_RvtOJr08kak2G5Y";
+const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 const BossTimerView = ({ isDarkMode, currentUser, members = [] }) => {
