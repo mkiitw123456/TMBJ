@@ -3,10 +3,10 @@
 export const APP_VERSION = "0312v1";
 
 // Discord Webhook URL (若不需要可留空)
-export const DISCORD_NOTIFY_WEBHOOK_URL = "https://discord.com/api/webhooks/1450050856094535745/0dvodClTjDzQEc_t5z_cCXNjPTF2wCyilpcWtJJNyX0xGhp4lYcRYOgzOam1IWT9Zqgo"; 
-export const DISCORD_LOG_WEBHOOK_URL = "https://discord.com/api/webhooks/1450325286062260296/_cNDE7s-GKL0QHVGKye5qIRA-xsQH-iOXUyFLWaDsGc0LwXTU94HC4yFdRW-eJm6KmTF";
+export const DISCORD_NOTIFY_WEBHOOK_URL = "https://discord.com/api/webhooks/1481500125502242866/a4XsYxMFRe36xeSYACcPGr6TI8Yg9pUupKSYco2ES6dW5L-QCBf5S17y6zfezKp_WB3r"; 
+export const DISCORD_LOG_WEBHOOK_URL = "https://discord.com/api/webhooks/1481520215845109931/X_gj3E5_ZllN_FCTSgP6sEDh-diPD4OdLUPobgtXCNWf8h53uJaTrIX3uxhz6dO5qJry";
 export const DISCORD_BOSS_WEBHOOK_URL = "https://discord.com/api/webhooks/1464190741030113391/yYm3C8f2_0EE1TOhP-vIVjLiciBnFkeFClgp6cueikYAjKPNvlZ-WGcBB_CEoc9lfSzG";
-export const DISCORD_HISTORY_WEBHOOK_URL = "https://discord.com/api/webhooks/1465923924851294239/cKbI6LIiOxjT9wnldK2h6-hN_g9B0IcThUqZJJjlIxvQWQ8RTlv4xioWi75Tb3jzznau";
+export const DISCORD_HISTORY_WEBHOOK_URL = "https://discord.com/api/webhooks/1481520209696264345/4Rpoud3ATtb_iO6uDyu4fvCjI7fPFLxrimEfHw1M9QhRAY4ObcMSdSbwfmS-qdCkX_BU";
 // 交易所設定
 export const BASE_LISTING_FEE_PERCENT = 0.02; // 2% 刊登費
 
