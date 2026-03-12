@@ -1,7 +1,7 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
 import { 
-  LayoutDashboard, Users, Calculator, Clock, Menu, X, 
+  LayoutDashboard, Users, Calculator, Menu, X, 
   LogOut, PenTool, Key, Settings 
 } from 'lucide-react';
 
