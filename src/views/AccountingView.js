@@ -1,6 +1,5 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-// 🟢 引入新圖示 (PackagePlus, List, AlertCircle, ChevronRight)
 import { Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search, PackagePlus, List, AlertCircle, ChevronRight } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
@@ -9,6 +8,9 @@ import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
+
+// 🟢 1. 引入建議掛賣順序元件
+import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
 const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQtVWCzNdv-0BNV4SMvA8WH6P7IcOi7x11gXqkK53u6aY_eOeFiSMdW9W5UNWkGv_L-IucNVNvl0_5h/pub?output=csv";
@@ -54,13 +56,11 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isBalanceGridOpen, setIsBalanceGridOpen] = useState(false);
   const [isCostCalcOpen, setIsCostCalcOpen] = useState(false);
   
-  // 🟢 新增：物品字典狀態與 Modal
   const [itemDict, setItemDict] = useState([]);
   const [isDictModalOpen, setIsDictModalOpen] = useState(false);
   const [isItemSelectOpen, setIsItemSelectOpen] = useState(false);
   const [dictForm, setDictForm] = useState({ name: '', source: '', category: '', newSource: '', newCategory: '' });
   
-  // 🟢 新增：選擇物品面板的篩選狀態
   const [dictSearch, setDictSearch] = useState('');
   const [dictFilterSource, setDictFilterSource] = useState('all');
   const [dictFilterCategory, setDictFilterCategory] = useState('all');
@@ -86,7 +86,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
   const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
 
-  // Data Fetching: Active Items
   useEffect(() => {
     if (!db) return;
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
@@ -94,7 +93,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return () => unsubActive();
   }, []);
 
-  // 🟢 新增 Data Fetching: Item Dictionary
   useEffect(() => {
     if (!db) return;
     const qDict = query(collection(db, "item_dictionary"), orderBy("name", "asc"));
@@ -102,11 +100,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return () => unsubDict();
   }, []);
 
-  // 🟢 萃取不重複的來源與類別
   const uniqueSources = useMemo(() => [...new Set(itemDict.map(i => i.source).filter(Boolean))], [itemDict]);
   const uniqueCategories = useMemo(() => [...new Set(itemDict.map(i => i.category).filter(Boolean))], [itemDict]);
 
-  // 🟢 防內捲比對 (尋找同名且不是自己賣的物品)
   const currentCompetitors = useMemo(() => {
     if (!formData.itemName) return [];
     return activeItems.filter(item => item.itemName === formData.itemName && item.seller !== currentUser);
@@ -172,7 +168,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       } finally { setQueryLoading(false); }
   };
 
-  // 🟢 處理新增物品至名冊
   const handleAddDictItem = async () => {
     if (currentUser === '訪客') return alert("訪客權限不足");
     const finalSource = dictForm.source === 'NEW' ? dictForm.newSource.trim() : dictForm.source;
@@ -181,7 +176,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
     if (!finalName || !finalSource || !finalCategory) return alert("名稱、來源、類別皆為必填！");
     
-    // 檢查是否重複
     if (itemDict.some(i => i.name === finalName)) {
         return alert(`物品 [${finalName}] 已經存在於名冊中了！`);
     }
@@ -257,7 +251,10 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       });
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
-      sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
+      
+      // 🟢 2. 移除這行，不再發送 [已售出] 訊息到主要頻道
+      // sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
+      
       sendSoldNotification(item, currentUser);
       await saveToGoogleSheet(item, perPersonAmount);
       setTimeout(() => { setIsProcessing(false); }, 500);
@@ -279,7 +276,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   };
   const mainBgClass = isDarkMode ? 'text-gray-100' : 'text-gray-900';
 
-  // 🟢 字典過濾邏輯
   const filteredDictItems = itemDict.filter(item => {
       if (dictSearch && !item.name.toLowerCase().includes(dictSearch.toLowerCase())) return false;
       if (dictFilterSource !== 'all' && item.source !== dictFilterSource) return false;
@@ -288,56 +284,61 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   });
 
   return (
-    <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative ${mainBgClass}`}>
-      {/* Header Buttons */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-            <Plus size={20}/> 記帳
-        </button>
-        
-        {/* 🟢 新增：建立物品按鈕 */}
-        <button onClick={() => setIsDictModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-            <PackagePlus size={20}/> 新增物品
-        </button>
+    // 🟢 3. 調整排版：加入 flex-col 與 lg:flex-row，讓畫面分為左右兩欄
+    <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative flex flex-col lg:flex-row gap-6 ${mainBgClass}`}>
+      
+      {/* 🟢 左側欄位：建議掛賣順序 (設定為 sticky 可以讓它黏在畫面上) */}
+      <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-hidden h-fit max-h-[85vh] sticky top-6 ${theme.card}`}>
+          <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
+      </div>
 
-        <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-            <Grid size={20}/> 餘額表
-        </button>
-
-        <div className="flex gap-2">
-            <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                <Search size={20}/> 查詢收益
+      {/* 🟢 右側欄位：原本的主要記帳區塊 */}
+      <div className="w-full lg:w-3/4 flex flex-col">
+          {/* Header Buttons */}
+          <div className="flex flex-wrap gap-3 mb-6">
+            <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                <Plus size={20}/> 記帳
             </button>
-        </div>
-
-        <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
-            <Calculator size={20}/> 計算機
-        </button>
-      </div>
-
-      {/* Active Items Section */}
-      <div className="mb-8">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
-            <h2 className="text-2xl font-bold">進行中項目</h2>
-            <div className="flex bg-black/20 p-1 rounded-lg border border-white/10 self-end sm:self-auto">
-                <button onClick={() => setFilterMode('all')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <Users size={14}/> 全部 </button>
-                <button onClick={() => setFilterMode('mine')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <User size={14}/> 我的 </button>
+            <button onClick={() => setIsDictModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                <PackagePlus size={20}/> 新增物品
+            </button>
+            <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                <Grid size={20}/> 餘額表
+            </button>
+            <div className="flex gap-2">
+                <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                    <Search size={20}/> 查詢收益
+                </button>
             </div>
-        </div>
+            <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
+                <Calculator size={20}/> 計算機
+            </button>
+          </div>
 
-        <div className="grid grid-cols-1 gap-6">
-          {displayedActiveItems.map(item => (
-            <ItemCard key={item.id} item={item} theme={theme} updateItemValue={updateItemValue} handleSettleAll={handleSettleAll} handleDelete={handleDelete} confirmSettleId={confirmSettleId} setConfirmSettleId={setConfirmSettleId} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser} />
-          ))}
-          {displayedActiveItems.length === 0 && (
-              <div className="col-span-full text-center py-10 opacity-30 border-2 border-dashed border-gray-500 rounded-xl">
-                  {filterMode === 'mine' ? '您目前沒有掛賣項目' : '目前沒有進行中的項目'}
-              </div>
-          )}
-        </div>
+          {/* Active Items Section */}
+          <div className="mb-8">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
+                <h2 className="text-2xl font-bold">進行中項目</h2>
+                <div className="flex bg-black/20 p-1 rounded-lg border border-white/10 self-end sm:self-auto">
+                    <button onClick={() => setFilterMode('all')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <Users size={14}/> 全部 </button>
+                    <button onClick={() => setFilterMode('mine')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <User size={14}/> 我的 </button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6">
+              {displayedActiveItems.map(item => (
+                <ItemCard key={item.id} item={item} theme={theme} updateItemValue={updateItemValue} handleSettleAll={handleSettleAll} handleDelete={handleDelete} confirmSettleId={confirmSettleId} setConfirmSettleId={setConfirmSettleId} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser} />
+              ))}
+              {displayedActiveItems.length === 0 && (
+                  <div className="col-span-full text-center py-10 opacity-30 border-2 border-dashed border-gray-500 rounded-xl">
+                      {filterMode === 'mine' ? '您目前沒有掛賣項目' : '目前沒有進行中的項目'}
+                  </div>
+              )}
+            </div>
+          </div>
       </div>
 
-      {/* 🟢 物品名冊建檔 Modal */}
+      {/* 物品名冊建檔 Modal */}
       {isDictModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
@@ -390,7 +391,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 <button onClick={() => setIsModalOpen(false)} className={theme.text}><X/></button>
             </div>
             <div className="space-y-4 mb-6">
-                {/* 🟢 修改：點擊選擇物品按鈕 */}
                 <div>
                     <label className={`block text-xs mb-1 ${theme.subText}`}>物品名稱</label>
                     <div 
@@ -414,7 +414,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 </div>
             </div>
 
-            {/* 🟢 新增：防內捲提示區塊 */}
             {formData.itemName && currentCompetitors.length > 0 && (
                 <div className="mb-6 p-3 bg-orange-900/30 border border-orange-500/50 rounded-lg animate-in fade-in zoom-in">
                     <p className="text-orange-400 text-xs font-bold flex items-center gap-1 mb-2">
@@ -439,17 +438,15 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 🟢 物品選擇器面板 (蓋在原本的 Modal 之上) */}
+      {/* 物品選擇器面板 */}
       {isItemSelectOpen && (
         <div className="fixed inset-0 bg-black/80 flex flex-col p-4 z-[60] backdrop-blur-md animate-in slide-in-from-bottom-4">
             <div className={`w-full max-w-2xl mx-auto rounded-2xl shadow-2xl flex flex-col h-full max-h-[90vh] ${theme.card}`}>
-                {/* 標頭 */}
                 <div className="p-4 border-b border-gray-700 flex justify-between items-center shrink-0">
                     <h3 className={`text-xl font-bold ${theme.text} flex items-center gap-2`}><List size={24}/> 選擇物品</h3>
                     <button onClick={() => setIsItemSelectOpen(false)} className={`p-2 rounded-full hover:bg-white/10 ${theme.text}`}><X/></button>
                 </div>
                 
-                {/* 搜尋與篩選器 */}
                 <div className="p-4 border-b border-gray-700 bg-black/10 shrink-0 space-y-3">
                     <div className="relative">
                         <Search className="absolute left-3 top-3 text-gray-500" size={18} />
@@ -473,7 +470,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                     </div>
                 </div>
 
-                {/* 物品清單 */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                     {filteredDictItems.length === 0 ? (
                         <div className="text-center py-20 opacity-50 flex flex-col items-center">
