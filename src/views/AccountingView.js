@@ -1,15 +1,18 @@
 // src/views/AccountingView.js
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search, PackagePlus, List, AlertCircle, ChevronRight } from 'lucide-react';
+import { 
+  Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search, 
+  PackagePlus, List, AlertCircle, ChevronRight, 
+  Clock, Globe, Settings, Trash2 // 🟢 引入時間軸需要的 Icon
+} from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
-import { sendLog, sendNotify, sendSoldNotification } from '../utils/helpers';
+// 🟢 引入時間格式化小工具
+import { sendLog, sendNotify, sendSoldNotification, formatTimeWithSeconds, formatTimeOnly } from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
 import CostCalculatorModal from '../components/CostCalculatorModal';
 import { EXCHANGE_TYPES } from '../utils/constants';
-
-// 🟢 1. 引入建議掛賣順序元件
 import SellerSuggestionStrip from '../components/SellerSuggestionStrip';
 
 const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbz35pDfw6aUtg_zvVhix30nYv_0tKAa9No8_cuR1CIKRZnpUpAzomCHSCdDSORn2n8hdA/exec";
@@ -80,25 +83,82 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [formData, setFormData] = useState({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
 
+  // ==========================================
+  // 🟢 Boss 時間軸相關狀態
+  // ==========================================
+  const [timelineTypes, setTimelineTypes] = useState([]);
+  const [timelineRecords, setTimelineRecords] = useState([]);
+  const [now, setNow] = useState(new Date()); 
+  const [timeOffset, setTimeOffset] = useState(0); 
+  const [isTimeSynced, setIsTimeSynced] = useState(false);
+  
+  const [isTimelineSettingsOpen, setIsTimelineSettingsOpen] = useState(false);
+  const [timelineTypeForm, setTimelineTypeForm] = useState({ name: '', interval: 60, color: '#FF5733' });
+  const [timelineRecordForm, setTimelineRecordForm] = useState({ typeId: '', deathDate: '', deathTime: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const filteredMembers = useMemo(() => {
     return members.filter(m => m.hideFromAccounting !== true);
   }, [members]);
 
   const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
 
+  // === 資料讀取 Hooks ===
   useEffect(() => {
     if (!db) return;
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
     const unsubActive = onSnapshot(qActive, (snap) => setActiveItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
-    return () => unsubActive();
+    
+    const qDict = query(collection(db, "item_dictionary"), orderBy("name", "asc"));
+    const unsubDict = onSnapshot(qDict, (snap) => setItemDict(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
+
+    // 🟢 載入時間軸資料
+    const q3 = query(collection(db, "timeline_types"), orderBy("interval"));
+    const unsub3 = onSnapshot(q3, snap => setTimelineTypes(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const q4 = query(collection(db, "timeline_records"), orderBy("deathTimestamp", "desc"));
+    const unsub4 = onSnapshot(q4, snap => setTimelineRecords(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+
+    return () => { unsubActive(); unsubDict(); unsub3(); unsub4(); };
+  }, []);
+
+  // 🟢 時間校正與計時器
+  useEffect(() => {
+    const syncTime = async () => {
+        try {
+            const response = await fetch(window.location.href, { method: 'HEAD', cache: 'no-store' });
+            const serverDateStr = response.headers.get('Date');
+            if (serverDateStr) {
+                const serverTime = new Date(serverDateStr).getTime();
+                const offset = serverTime - Date.now();
+                setTimeOffset(offset);
+                setIsTimeSynced(true);
+            }
+        } catch (e) { console.warn("Time sync failed", e); }
+    };
+    syncTime();
   }, []);
 
   useEffect(() => {
-    if (!db) return;
-    const qDict = query(collection(db, "item_dictionary"), orderBy("name", "asc"));
-    const unsubDict = onSnapshot(qDict, (snap) => setItemDict(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
-    return () => unsubDict();
-  }, []);
+    const timer = setInterval(() => { setNow(new Date(Date.now() + timeOffset)); }, 1000); 
+    return () => clearInterval(timer);
+  }, [timeOffset]);
+
+  // 🟢 時間軸計算邏輯
+  const calculate2DayMarkers = () => { const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0); const totalDuration = 48 * 60 * 60 * 1000; const endOfTomorrow = new Date(startOfToday.getTime() + totalDuration); let rawMarkers = []; timelineRecords.forEach(record => { const type = timelineTypes.find(t => t.id === record.typeId); if (!type) return; const intervalMs = type.interval * 60 * 1000; let checkTime = record.deathTimestamp; if (checkTime < startOfToday.getTime()) { const diff = startOfToday.getTime() - checkTime; const jumps = Math.floor(diff / intervalMs); checkTime += jumps * intervalMs; } while (checkTime <= endOfTomorrow.getTime() + intervalMs) { if (checkTime >= startOfToday.getTime() && checkTime <= endOfTomorrow.getTime()) { const current = new Date(checkTime); const offsetMs = checkTime - startOfToday.getTime(); const percent = (offsetMs / totalDuration) * 100; rawMarkers.push({ id: record.id + '_' + checkTime, percent, time: formatTimeOnly(current), color: type.color, name: type.name, originalRecordId: record.id, interval: type.interval }); } checkTime += intervalMs; } }); rawMarkers.sort((a, b) => a.percent - b.percent); const levels = [ -10, -10, -10, -10 ]; return rawMarkers.map(marker => { let assignedLevel = 0; for (let i = 0; i < levels.length; i++) { if (marker.percent > levels[i] + 1.5) { assignedLevel = i; levels[i] = marker.percent; break; } if (i === levels.length - 1) { assignedLevel = 0; levels[0] = marker.percent; } } return { ...marker, level: assignedLevel }; }); };
+  const markers = calculate2DayMarkers();
+  
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const totalDuration = 48 * 60 * 60 * 1000;
+  const currentOffset = now.getTime() - startOfToday.getTime();
+  const currentPercent = Math.max(0, Math.min(100, (currentOffset / totalDuration) * 100));
+  const highlightHours = [2, 5, 8, 11, 14, 17, 20, 23];
+  const formatDateSimple = (d) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+
+  const handleAddTimelineType = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineTypeForm.name || timelineTypeForm.interval <= 0) return alert("資料不完整"); setIsSubmitting(true); try { await addDoc(collection(db, "timeline_types"), timelineTypeForm); setTimelineTypeForm({ name: '', interval: 60, color: '#FF5733' }); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
+  const handleDeleteTimelineType = async (id) => { if (currentUser === '訪客') return; if(window.confirm("確定刪除此設定？")) await deleteDoc(doc(db, "timeline_types", id)); };
+  const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
+  const handleDeleteTimelineRecord = async (id) => { if (currentUser === '訪客') return; if(window.confirm("刪除此紀錄？")) await deleteDoc(doc(db, "timeline_records", id)); };
+
 
   const uniqueSources = useMemo(() => [...new Set(itemDict.map(i => i.source).filter(Boolean))], [itemDict]);
   const uniqueCategories = useMemo(() => [...new Set(itemDict.map(i => i.category).filter(Boolean))], [itemDict]);
@@ -251,10 +311,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       });
       setConfirmSettleId(null);
       sendLog(currentUser, "結算項目", `${item.itemName} (每人分 ${perPersonAmount})`);
-      
-      // 🟢 2. 移除這行，不再發送 [已售出] 訊息到主要頻道
-      // sendNotify(`💰 **[已售出]** ${item.seller} 賣出了 **${item.itemName}**\n💵 分紅: ${perPersonAmount.toLocaleString()}/人`);
-      
       sendSoldNotification(item, currentUser);
       await saveToGoogleSheet(item, perPersonAmount);
       setTimeout(() => { setIsProcessing(false); }, 500);
@@ -284,59 +340,121 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   });
 
   return (
-    // 🟢 3. 調整排版：加入 flex-col 與 lg:flex-row，讓畫面分為左右兩欄
-    <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative flex flex-col lg:flex-row gap-6 ${mainBgClass}`}>
+    <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative flex flex-col gap-6 ${mainBgClass}`}>
       
-      {/* 🟢 左側欄位：建議掛賣順序 (設定為 sticky 可以讓它黏在畫面上) */}
-      <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-hidden h-fit max-h-[85vh] sticky top-6 ${theme.card}`}>
-          <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
-      </div>
-
-      {/* 🟢 右側欄位：原本的主要記帳區塊 */}
-      <div className="w-full lg:w-3/4 flex flex-col">
-          {/* Header Buttons */}
-          <div className="flex flex-wrap gap-3 mb-6">
-            <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                <Plus size={20}/> 記帳
-            </button>
-            <button onClick={() => setIsDictModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                <PackagePlus size={20}/> 新增物品
-            </button>
-            <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                <Grid size={20}/> 餘額表
-            </button>
-            <div className="flex gap-2">
-                <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
-                    <Search size={20}/> 查詢收益
-                </button>
-            </div>
-            <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
-                <Calculator size={20}/> 計算機
-            </button>
-          </div>
-
-          {/* Active Items Section */}
-          <div className="mb-8">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
-                <h2 className="text-2xl font-bold">進行中項目</h2>
-                <div className="flex bg-black/20 p-1 rounded-lg border border-white/10 self-end sm:self-auto">
-                    <button onClick={() => setFilterMode('all')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <Users size={14}/> 全部 </button>
-                    <button onClick={() => setFilterMode('mine')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <User size={14}/> 我的 </button>
+      {/* ========================================== */}
+      {/* 🟢 上方：Boss 時間軸區塊 */}
+      {/* ========================================== */}
+      <div className="w-full flex flex-col gap-2">
+         {/* Timeline Bar */}
+         <div className="relative">
+             <div className="flex relative mb-1 text-xs opacity-70 font-bold px-1 w-full">
+                 <span className="w-1/2 text-center border-r border-white/20">Today</span>
+                 <span className="w-1/2 text-center">Tomorrow</span>
+             </div>
+             <div className={`w-full relative mt-8 rounded border ${theme.card}`}>
+                <div className="h-16 relative w-full">
+                    {[0, 1].map(dayOffset => (highlightHours.map(h => {
+                        const hourPercent = (h / 24) * 50; const startPercent = (dayOffset * 50) + hourPercent; const widthPercent = (1 / 24) * 50;
+                        return (<div key={`hl-${dayOffset}-${h}`} className="absolute top-0 bottom-0 bg-yellow-500/10 border-x border-yellow-500/20 z-0" style={{ left: `${startPercent}%`, width: `${widthPercent}%` }} />);
+                    })))}
+                    {[...Array(48)].map((_, i) => {
+                        const hour = i % 24; const percent = (i / 48) * 100;
+                        return (<div key={i} className="absolute top-0 bottom-0 border-l border-white/10 z-10" style={{ left: `${percent}%` }}>{hour % 3 === 0 && (<span className="absolute -bottom-5 -translate-x-1/2 text-xs font-bold font-mono opacity-60 select-none">{hour}</span>)}</div>);
+                    })}
+                    <div className="absolute top-0 bottom-0 border-l-2 border-white/40 z-10" style={{ left: '50%' }}></div>
+                    <div className="absolute top-[-24px] bottom-0 w-0.5 bg-red-500 z-20 shadow-[0_0_8px_rgba(239,68,68,0.8)] pointer-events-none" style={{ left: `${currentPercent}%` }}>
+                        <div className="absolute -top-1 -translate-x-1/2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded font-bold shadow-md whitespace-nowrap">NOW</div>
+                    </div>
+                    {markers.map((m, idx) => (
+                        <div key={idx} className="absolute w-1.5 z-30 hover:z-40 group cursor-pointer transition-all hover:w-3 hover:brightness-125 border-l border-white/20" style={{ left: `${m.percent}%`, backgroundColor: m.color, top: `${m.level * 25}%`, height: `25%` }} onClick={() => { if(window.confirm(`刪除 ${m.name}?`)) handleDeleteTimelineRecord(m.originalRecordId); }}>
+                            <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 px-2 py-1 rounded text-xs whitespace-nowrap shadow-lg hidden group-hover:block z-50 pointer-events-none bg-gray-900 text-white border border-gray-600">
+                                <div className="font-bold flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{background: m.color}}></div>{m.name}</div><div className="font-mono text-center opacity-80">{m.time}</div>
+                            </div>
+                        </div>
+                    ))}
                 </div>
-            </div>
+             </div>
+         </div>
 
-            <div className="grid grid-cols-1 gap-6">
-              {displayedActiveItems.map(item => (
-                <ItemCard key={item.id} item={item} theme={theme} updateItemValue={updateItemValue} handleSettleAll={handleSettleAll} handleDelete={handleDelete} confirmSettleId={confirmSettleId} setConfirmSettleId={setConfirmSettleId} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser} />
-              ))}
-              {displayedActiveItems.length === 0 && (
-                  <div className="col-span-full text-center py-10 opacity-30 border-2 border-dashed border-gray-500 rounded-xl">
-                      {filterMode === 'mine' ? '您目前沒有掛賣項目' : '目前沒有進行中的項目'}
-                  </div>
-              )}
+         {/* Control Bar */}
+         <div className={`mt-2 p-3 rounded-xl shadow-lg flex flex-wrap items-center justify-between gap-4 backdrop-blur-sm border ${theme.card}`}>
+            <div className="flex items-center gap-4">
+              <Clock size={32} className="opacity-80"/>
+              <div>
+                <span className="text-xs opacity-70 font-bold tracking-widest flex items-center gap-1">
+                    CURRENT TIME {formatDateSimple(now)}
+                    {isTimeSynced && <Globe size={10} className="text-green-500" title="已與伺服器時間同步"/>}
+                </span>
+                <span className="text-2xl font-mono font-bold block leading-none">{formatTimeWithSeconds(now)}</span>
+              </div>
             </div>
+            <button onClick={() => setIsTimelineSettingsOpen(true)} className="flex items-center gap-2 text-white px-3 py-1.5 rounded shadow bg-orange-600 hover:bg-orange-500 text-sm ml-auto">
+                <Settings size={16}/> 時間線設定
+            </button>
+         </div>
+      </div>
+
+      {/* ========================================== */}
+      {/* 🟢 下方：左欄 (掛賣建議) + 右欄 (團隊記帳) */}
+      {/* ========================================== */}
+      <div className="flex flex-col lg:flex-row gap-6 w-full">
+          
+          {/* 左側欄位：建議掛賣順序 (設定為 sticky 可以讓它黏在畫面上) */}
+          <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-hidden h-fit max-h-[85vh] sticky top-6 ${theme.card}`}>
+              <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
+          </div>
+
+          {/* 右側欄位：主要記帳區塊 */}
+          <div className="w-full lg:w-3/4 flex flex-col">
+              {/* Header Buttons */}
+              <div className="flex flex-wrap gap-3 mb-6">
+                <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                    <Plus size={20}/> 記帳
+                </button>
+                <button onClick={() => setIsDictModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                    <PackagePlus size={20}/> 新增物品
+                </button>
+                <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                    <Grid size={20}/> 餘額表
+                </button>
+                <div className="flex gap-2">
+                    <button onClick={() => setIsQueryOpen(true)} className="flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                        <Search size={20}/> 查詢收益
+                    </button>
+                </div>
+                <button onClick={() => setIsCostCalcOpen(true)} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold ml-auto">
+                    <Calculator size={20}/> 計算機
+                </button>
+              </div>
+
+              {/* Active Items Section */}
+              <div className="mb-8">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
+                    <h2 className="text-2xl font-bold">進行中項目</h2>
+                    <div className="flex bg-black/20 p-1 rounded-lg border border-white/10 self-end sm:self-auto">
+                        <button onClick={() => setFilterMode('all')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <Users size={14}/> 全部 </button>
+                        <button onClick={() => setFilterMode('mine')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${filterMode === 'mine' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}> <User size={14}/> 我的 </button>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6">
+                  {displayedActiveItems.map(item => (
+                    <ItemCard key={item.id} item={item} theme={theme} updateItemValue={updateItemValue} handleSettleAll={handleSettleAll} handleDelete={handleDelete} confirmSettleId={confirmSettleId} setConfirmSettleId={setConfirmSettleId} confirmDeleteId={confirmDeleteId} setConfirmDeleteId={setConfirmDeleteId} currentUser={currentUser} />
+                  ))}
+                  {displayedActiveItems.length === 0 && (
+                      <div className="col-span-full text-center py-10 opacity-30 border-2 border-dashed border-gray-500 rounded-xl">
+                          {filterMode === 'mine' ? '您目前沒有掛賣項目' : '目前沒有進行中的項目'}
+                      </div>
+                  )}
+                </div>
+              </div>
           </div>
       </div>
+
+      {/* ========================================== */}
+      {/* Modals 區塊 */}
+      {/* ========================================== */}
 
       {/* 物品名冊建檔 Modal */}
       {isDictModalOpen && (
@@ -553,6 +671,58 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                     </div>
                 )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 時間線設定 Modal */}
+      {isTimelineSettingsOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[999]">
+          <div className={`w-full max-w-2xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[85vh] ${theme.card}`}> 
+             <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4">
+                 <h3 className="font-bold text-xl flex items-center gap-2"><Settings size={20}/> 時間線設定</h3>
+                 <button onClick={()=>setIsTimelineSettingsOpen(false)}><X size={24}/></button>
+             </div>
+             <div className="flex gap-6 h-full overflow-hidden">
+                <div className="flex-1 flex flex-col border-r border-white/10 pr-6">
+                    <h4 className="font-bold text-sm mb-3 text-orange-400">1. 設定標記類別</h4>
+                    <div className="space-y-3 mb-4">
+                        <div className="grid grid-cols-2 gap-2">
+                            <input type="text" placeholder="名稱" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.name} onChange={e=>setTimelineTypeForm({...timelineTypeForm, name: e.target.value})}/>
+                            <input type="number" placeholder="週期(分)" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineTypeForm.interval} onChange={e=>setTimelineTypeForm({...timelineTypeForm, interval: Number(e.target.value)})}/>
+                        </div>
+                        <div className="flex gap-2">
+                            <input type="color" className="h-9 w-full rounded cursor-pointer" value={timelineTypeForm.color} onChange={e=>setTimelineTypeForm({...timelineTypeForm, color: e.target.value})}/>
+                            <button onClick={handleAddTimelineType} disabled={isSubmitting} className="whitespace-nowrap px-4 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-500">新增</button>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
+                        {timelineTypes.map(t => (
+                            <div key={t.id} className="flex justify-between items-center text-xs p-2 rounded bg-black/20 hover:bg-black/30">
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor: t.color}}></div><span>{t.name} ({t.interval}m)</span></div>
+                                <button onClick={()=>handleDeleteTimelineType(t.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14}/></button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="flex-1 flex flex-col">
+                    <h4 className="font-bold text-sm mb-3 text-blue-400">2. 放上標記點</h4>
+                    <div className="space-y-3">
+                        <select className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.typeId} onChange={e=>setTimelineRecordForm({...timelineRecordForm, typeId: e.target.value})}>
+                            <option value="">選擇類別...</option>
+                            {timelineTypes.map(t => <option key={t.id} value={t.id} style={{color: 'black'}}>{t.name}</option>)}
+                        </select>
+                        <div className="grid grid-cols-2 gap-2">
+                            <input type="date" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathDate} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathDate: e.target.value})}/>
+                            <input type="time" className={`w-full p-2 border rounded text-sm ${theme.input}`} value={timelineRecordForm.deathTime} onChange={e=>setTimelineRecordForm({...timelineRecordForm, deathTime: e.target.value})}/>
+                        </div>
+                        <button onClick={handleAddTimelineRecord} disabled={isSubmitting} className="w-full py-2 bg-orange-600 text-white rounded font-bold hover:bg-orange-500 flex justify-center gap-2">
+                            {isSubmitting ? <Loader2 className="animate-spin" size={16}/> : '建立標記'}
+                        </button>
+                    </div>
+                    <div className="mt-auto pt-4 text-xs opacity-50">* 此時間線與下方列表獨立運作，用於特定週期監控。</div>
+                </div>
+             </div>
           </div>
         </div>
       )}
