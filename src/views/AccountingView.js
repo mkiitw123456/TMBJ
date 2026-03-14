@@ -72,7 +72,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryResult, setQueryResult] = useState(null);
   const [queryForm, setQueryForm] = useState({
-      member: currentUser === '訪客' || currentUser === 'Wolf' ? (members[0]?.name || '') : currentUser,
+      member: currentUser === '訪客' || currentUser === 'MrAirWolf' ? (members[0]?.name || '') : currentUser,
       start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
       end: new Date().toISOString().split('T')[0]
   });
@@ -743,7 +743,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                             <AlertTriangle size={40} className="text-red-500" />
                         </div>
                         <h3 className="text-xl font-bold text-white mb-2">系統發生異常！</h3>
-                        <p className="text-red-300 text-sm mb-6">已出售過程發生錯誤<br/>請在 Discord Tag Wolf</p>
+                        <p className="text-red-300 text-sm mb-6">已出售過程發生錯誤<br/>請在 Discord Tag MrAirWolf</p>
                         <button onClick={() => setIsProcessing(false)} className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg font-bold transition-colors"> 關閉並重試 </button>
                     </>
                 )}

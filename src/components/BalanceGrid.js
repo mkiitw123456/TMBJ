@@ -70,7 +70,7 @@ const BalanceGrid = ({ isOpen, onClose, theme, isDarkMode, currentUser, activeIt
     if (currentUser === '訪客') return; 
     const key = `${payer}_${receiver}`;
     const newValue = parseFloat(value) || 0;
-    const canEdit = payer === currentUser || receiver === currentUser || currentUser === 'Wolf';
+    const canEdit = payer === currentUser || receiver === currentUser || currentUser === 'MrAirWolf';
     if (!canEdit) return;
 
     try {
@@ -227,7 +227,7 @@ ${afterText}
                                         const key = `${payer}_${receiver}`; 
                                         const val = gridData[key] || 0;
                                         if (!isSelf) rowTotal += val; 
-                                        const canEdit = payer === currentUser || receiver === currentUser || currentUser === 'Wolf';
+                                        const canEdit = payer === currentUser || receiver === currentUser || currentUser === 'MrAirWolf';
                                         return (
                                             <td key={receiver} className={`p-1 border text-center ${tableStyles.cell} ${isSelf ? tableStyles.selfCell : ''}`}>
                                                 {!isSelf && (

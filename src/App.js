@@ -168,7 +168,7 @@ const App = () => {
               {/* 🟢 2. 隱藏 Boss 分頁按鈕 */}
               {/* <NavItem id="boss" icon={Clock} label="Boss 時間" /> */}
               <NavItem id="accounting" icon={Calculator} label="團隊記帳" />
-              <NavItem id="characters" icon={Users} label="角色體力" />
+              {/* <NavItem id="characters" icon={Users} label="角色體力" /> */}
             </div>
 
             <div className="flex items-center gap-3">
@@ -181,7 +181,7 @@ const App = () => {
               </div>
 
               <div className="flex gap-1">
-                  {currentUser === 'Wolf' && (
+                  {currentUser === 'MrAirWolf' && (
                     <>
                       <button onClick={() => setIsPasswordManagerOpen(true)} className="p-2 rounded-lg text-gray-400 hover:text-green-400 hover:bg-white/10 transition-colors" title="管理成員密碼"><Key size={20}/></button>
                       <button onClick={() => setIsSystemSettingsOpen(true)} className="p-2 rounded-lg text-gray-400 hover:text-blue-400 hover:bg-white/10 transition-colors" title="系統版本設定"><Settings size={20}/></button>
@@ -202,7 +202,7 @@ const App = () => {
             {/* 🟢 3. 手機版也隱藏 Boss 分頁按鈕 */}
             {/* <NavItem id="boss" icon={Clock} label="Boss 時間" /> */}
             <NavItem id="accounting" icon={Calculator} label="團隊記帳" />
-            <NavItem id="characters" icon={Users} label="角色體力" />
+            {/* <NavItem id="characters" icon={Users} label="角色體力" /> */}
           </div>
         )}
       </nav>
