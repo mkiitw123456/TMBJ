@@ -401,9 +401,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       <div className="flex flex-col lg:flex-row gap-6 w-full">
           
           {/* 左側欄位：建議掛賣順序 (設定為 sticky 可以讓它黏在畫面上) */}
-          <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-hidden h-fit max-h-[85vh] sticky top-6 ${theme.card}`}>
-              <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
-          </div>
+            <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-y-auto max-h-[calc(100vh-100px)] sticky top-6 custom-scrollbar ${theme.card}`}>
+                <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
+            </div>
 
           {/* 右側欄位：主要記帳區塊 */}
           <div className="w-full lg:w-3/4 flex flex-col">
