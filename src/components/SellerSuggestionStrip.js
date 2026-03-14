@@ -4,9 +4,10 @@ import { TrendingUp } from 'lucide-react';
 import { doc, collection, onSnapshot, query } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { calculateFinance } from '../utils/helpers';
-import { MEMBERS } from '../utils/constants';
+// 🔴 移除了原本從 constants.js 引入寫死名單的程式碼
 
-const SellerSuggestionStrip = ({ isDarkMode, vertical = false }) => {
+// 🟢 確保接收來自外部 (Firebase) 的 members 真實名單
+const SellerSuggestionStrip = ({ isDarkMode, vertical = false, members = [] }) => {
   const [gridData, setGridData] = useState({});
   const [activeItems, setActiveItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,7 +34,10 @@ const SellerSuggestionStrip = ({ isDarkMode, vertical = false }) => {
 
   // 3. 計算邏輯
   const sellerSuggestions = useMemo(() => {
-    const detectedMembers = new Set(MEMBERS);
+    // 🟢 使用動態傳入的真實名單
+    const activeMemberNames = members.map(m => typeof m === 'string' ? m : m.name);
+    const detectedMembers = new Set(activeMemberNames);
+    
     Object.keys(gridData).forEach(k => {
         const [p, r] = k.split('_');
         if(p) detectedMembers.add(p);
@@ -75,18 +79,20 @@ const SellerSuggestionStrip = ({ isDarkMode, vertical = false }) => {
       return { name: member, score };
     });
 
-    return suggestions.sort((a, b) => b.score - a.score);
-  }, [gridData, activeItems]);
+    // 🟢 終極防幽靈機制：如果這個人「不在目前的會員名單內」且「分數為 0」，直接從畫面上剔除
+    return suggestions
+      .filter(item => activeMemberNames.includes(item.name) || item.score !== 0)
+      .sort((a, b) => b.score - a.score);
+      
+  }, [gridData, activeItems, members]); // 確保 members 更新時，這裡也會重新計算
 
   if (loading) return null;
 
-  // 🟢 樣式判斷：垂直模式 vs 橫條模式
-const containerClass = vertical 
+  const containerClass = vertical 
     ? "h-full flex flex-col" 
     : `mt-4 p-3 rounded-xl border flex flex-col gap-2 ${isDarkMode ? 'bg-orange-900/10 border-orange-500/30' : 'bg-orange-50 border-orange-200'}`;
 
   const listClass = vertical
-    // 🟢 修改：增加 p-2 內距防止切邊
     ? "flex flex-col gap-2 overflow-y-auto p-2 custom-scrollbar flex-1" 
     : "flex overflow-x-auto gap-3 pb-1 no-scrollbar";
 
