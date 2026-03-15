@@ -1,7 +1,8 @@
 // src/components/SystemSettingsModal.js
 import React, { useState, useEffect } from 'react';
 import { X, AlertTriangle, Users, Loader2, ArrowRight, Save, GitBranch } from 'lucide-react';
-import { collection, getDocs, doc, writeBatch, getDoc, updateDoc } from "firebase/firestore";
+// 🟢 把這行改成這樣 (多了 deleteField)
+import { collection, getDocs, doc, writeBatch, getDoc, updateDoc, deleteField } from "firebase/firestore";
 import { db } from '../config/firebase';
 
 const SystemSettingsModal = ({ isOpen, onClose, theme, currentSettings }) => {
@@ -41,6 +42,7 @@ const SystemSettingsModal = ({ isOpen, onClose, theme, currentSettings }) => {
   };
 
   // 🟢 全域安全更名核心邏輯
+  // 🟢 全域安全更名核心邏輯 (支援角色體力轉移)
   const handleRenameGlobally = async () => {
     const fromName = oldName.trim();
     const toName = newName.trim();
@@ -48,7 +50,7 @@ const SystemSettingsModal = ({ isOpen, onClose, theme, currentSettings }) => {
     if (!fromName || !toName) return alert("請輸入舊名稱與新名稱！");
     if (fromName === toName) return alert("新舊名稱不能一樣！");
     
-    const confirmMsg = `【危險操作警告】\n確定要將系統中所有的 [${fromName}] 全面更名為 [${toName}] 嗎？\n這將會自動修改所有：\n1. 成員登入名單\n2. 進行中的掛賣項目\n3. 結算欠款表\n\n此操作無法復原，確定執行？`;
+    const confirmMsg = `【危險操作警告】\n確定要將系統中所有的 [${fromName}] 全面更名為 [${toName}] 嗎？\n這將會自動修改所有：\n1. 成員登入名單\n2. 進行中的掛賣項目\n3. 結算欠款表\n4. 角色體力數據\n\n此操作無法復原，確定執行？`;
     if (!window.confirm(confirmMsg)) return;
 
     setIsRenaming(true);
@@ -107,6 +109,20 @@ const SystemSettingsModal = ({ isOpen, onClose, theme, currentSettings }) => {
             }
         }
 
+        // 🟢 4. 更新 member_characters/data (轉移角色體力數據)
+        const charRef = doc(db, "member_characters", "data");
+        const charSnap = await getDoc(charRef);
+        if (charSnap.exists()) {
+            const charData = charSnap.data();
+            // 如果舊名字還有資料卡在裡面
+            if (charData[fromName]) {
+                batch.update(charRef, {
+                    [toName]: charData[fromName], // 把舊資料複製給新名字
+                    [fromName]: deleteField()     // 把舊名字的欄位安全刪除
+                });
+            }
+        }
+
         await batch.commit();
         alert(`✅ 成功！已將系統中所有的 [${fromName}] 替換為 [${toName}]。畫面將重新載入。`);
         window.location.reload(); 
@@ -118,7 +134,6 @@ const SystemSettingsModal = ({ isOpen, onClose, theme, currentSettings }) => {
         setIsRenaming(false);
     }
   };
-
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[999] backdrop-blur-sm">
       <div className={`w-full max-w-lg rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar ${theme.card || 'bg-gray-800 border-gray-700'}`}>

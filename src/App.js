@@ -168,7 +168,7 @@ const App = () => {
               {/* 🟢 2. 隱藏 Boss 分頁按鈕 */}
               {/* <NavItem id="boss" icon={Clock} label="Boss 時間" /> */}
               <NavItem id="accounting" icon={Calculator} label="團隊記帳" />
-              {/* <NavItem id="characters" icon={Users} label="角色體力" /> */}
+              <button onClick={() => setCurrentTab('stamina')}>角色體力</button>
             </div>
 
             <div className="flex items-center gap-3">
@@ -202,7 +202,7 @@ const App = () => {
             {/* 🟢 3. 手機版也隱藏 Boss 分頁按鈕 */}
             {/* <NavItem id="boss" icon={Clock} label="Boss 時間" /> */}
             <NavItem id="accounting" icon={Calculator} label="團隊記帳" />
-            {/* <NavItem id="characters" icon={Users} label="角色體力" /> */}
+            <NavItem id="characters" icon={Users} label="角色體力" />
           </div>
         )}
       </nav>
