@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, Calculator, Menu, X, 
-  LogOut, PenTool, Key, Settings 
+  LogOut, PenTool, Key, Settings ,Users
 } from 'lucide-react';
 
 // Views
@@ -168,7 +168,7 @@ const App = () => {
               {/* 🟢 2. 隱藏 Boss 分頁按鈕 */}
               {/* <NavItem id="boss" icon={Clock} label="Boss 時間" /> */}
               <NavItem id="accounting" icon={Calculator} label="團隊記帳" />
-              <button onClick={() => setCurrentTab('stamina')}>角色體力</button>
+              <NavItem id="characters" icon={Users} label="角色體力" />
             </div>
 
             <div className="flex items-center gap-3">
