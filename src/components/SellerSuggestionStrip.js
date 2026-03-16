@@ -1,16 +1,17 @@
 // src/components/SellerSuggestionStrip.js
 import React, { useState, useEffect, useMemo } from 'react';
-import { TrendingUp } from 'lucide-react';
+import { TrendingUp, Copy, Check } from 'lucide-react'; // 🟢 1. 引入了 Copy 和 Check 圖示
 import { doc, collection, onSnapshot, query } from "firebase/firestore";
 import { db } from '../config/firebase';
 import { calculateFinance } from '../utils/helpers';
-// 🔴 移除了原本從 constants.js 引入寫死名單的程式碼
 
-// 🟢 確保接收來自外部 (Firebase) 的 members 真實名單
 const SellerSuggestionStrip = ({ isDarkMode, vertical = false, members = [] }) => {
   const [gridData, setGridData] = useState({});
   const [activeItems, setActiveItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // 🟢 2. 新增一個狀態來控制「已複製」的視覺回饋
+  const [isCopied, setIsCopied] = useState(false); 
 
   // 1. 監聽餘額表
   useEffect(() => {
@@ -34,7 +35,6 @@ const SellerSuggestionStrip = ({ isDarkMode, vertical = false, members = [] }) =
 
   // 3. 計算邏輯
   const sellerSuggestions = useMemo(() => {
-    // 🟢 使用動態傳入的真實名單
     const activeMemberNames = members.map(m => typeof m === 'string' ? m : m.name);
     const detectedMembers = new Set(activeMemberNames);
     
@@ -79,12 +79,29 @@ const SellerSuggestionStrip = ({ isDarkMode, vertical = false, members = [] }) =
       return { name: member, score };
     });
 
-    // 🟢 終極防幽靈機制：如果這個人「不在目前的會員名單內」且「分數為 0」，直接從畫面上剔除
     return suggestions
       .filter(item => activeMemberNames.includes(item.name) || item.score !== 0)
       .sort((a, b) => b.score - a.score);
       
-  }, [gridData, activeItems, members]); // 確保 members 更新時，這裡也會重新計算
+  }, [gridData, activeItems, members]);
+
+  // 🟢 4. 複製順序功能函式
+  const handleCopyOrder = () => {
+      if (sellerSuggestions.length === 0) return;
+      
+      // 將名單提取出來並用 " > " 串接
+      const orderText = sellerSuggestions.map(item => item.name).join(' > ');
+      
+      // 寫入瀏覽器剪貼簿
+      navigator.clipboard.writeText(orderText).then(() => {
+          setIsCopied(true);
+          // 2 秒後恢復原本的複製圖示
+          setTimeout(() => setIsCopied(false), 2000); 
+      }).catch(err => {
+          console.error("複製失敗:", err);
+          alert("複製失敗，請手動複製");
+      });
+  };
 
   if (loading) return null;
 
@@ -96,26 +113,42 @@ const SellerSuggestionStrip = ({ isDarkMode, vertical = false, members = [] }) =
     ? "flex flex-col gap-2 overflow-y-auto p-2 custom-scrollbar flex-1" 
     : "flex overflow-x-auto gap-3 pb-1 no-scrollbar";
 
+  // 🟢 5. 調整 header 讓按鈕可以靠右對齊
   const headerClass = vertical
-    ? "mb-2 pb-2 border-b border-white/10 text-center py-2"
+    ? "mb-2 pb-2 border-b border-white/10 flex justify-between items-center px-2 py-1"
     : "flex justify-between items-center";
 
   return (
     <div className={containerClass}>
         <div className={headerClass}>
-            <h4 className={`font-bold flex items-center justify-center gap-2 ${vertical ? 'text-base' : 'text-xs'} ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
+            <h4 className={`font-bold flex items-center gap-2 ${vertical ? 'text-base' : 'text-xs'} ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>
                 <TrendingUp size={vertical ? 18 : 14}/> 建議掛賣順序
             </h4>
+            
+            {/* 🟢 6. 渲染複製按鈕 */}
+            <button
+                onClick={handleCopyOrder}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${vertical ? 'text-xs' : 'text-[10px]'} ${
+                    isCopied
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                    : `bg-black/20 hover:bg-black/40 border border-white/5 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`
+                }`}
+                title="複製排序名單"
+            >
+                {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                {isCopied ? '已複製' : '複製排序'}
+            </button>
         </div>
+        
         <div className={listClass}>
             {sellerSuggestions.map((item, index) => { 
                 const shouldSell = item.score > 0; 
                 return (
                     <div key={item.name} className={`
-                        rounded-lg border shadow-sm relative transition-colors
+                        rounded-lg border shadow-sm relative transition-colors shrink-0
                         ${isDarkMode ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-200'} 
                         ${index === 0 ? 'ring-1 ring-orange-500' : ''}
-                        ${vertical ? 'w-full flex items-center p-3 gap-3' : 'flex-none flex items-center gap-2 p-2 min-w-[120px]'}
+                        ${vertical ? 'w-full flex items-center p-3 gap-3' : 'flex items-center gap-2 p-2 min-w-[120px]'}
                     `}>
                         <div className={`
                             flex items-center justify-center font-bold text-white rounded
