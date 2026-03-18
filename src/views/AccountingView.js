@@ -3,11 +3,10 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search, 
   PackagePlus, List, AlertCircle, ChevronRight, 
-  Clock, Globe, Settings, Trash2 // 🟢 引入時間軸需要的 Icon
+  Clock, Globe, Settings, Trash2, Edit // 🟢 引入了 Edit 編輯圖示
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
-// 🟢 引入時間格式化小工具
 import { sendLog, sendNotify, sendSoldNotification, formatTimeWithSeconds, formatTimeOnly } from '../utils/helpers';
 import BalanceGrid from '../components/BalanceGrid';
 import ItemCard from '../components/ItemCard';
@@ -62,6 +61,9 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [itemDict, setItemDict] = useState([]);
   const [isDictModalOpen, setIsDictModalOpen] = useState(false);
   const [isItemSelectOpen, setIsItemSelectOpen] = useState(false);
+  
+  // 🟢 新增：用來追蹤目前正在編輯哪一個物品的 ID
+  const [editingDictId, setEditingDictId] = useState(null);
   const [dictForm, setDictForm] = useState({ name: '', source: '', category: '', newSource: '', newCategory: '' });
   
   const [dictSearch, setDictSearch] = useState('');
@@ -83,9 +85,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [formData, setFormData] = useState({ itemName: '', price: '', cost: 0, seller: currentUser, participants: [], exchangeType: 'WORLD' });
 
-  // ==========================================
-  // 🟢 Boss 時間軸相關狀態
-  // ==========================================
   const [timelineTypes, setTimelineTypes] = useState([]);
   const [timelineRecords, setTimelineRecords] = useState([]);
   const [now, setNow] = useState(new Date()); 
@@ -97,39 +96,29 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [timelineRecordForm, setTimelineRecordForm] = useState({ typeId: '', deathDate: '', deathTime: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const filteredMembers = useMemo(() => {
-    return members.filter(m => m.hideFromAccounting !== true);
-  }, [members]);
-
+  const filteredMembers = useMemo(() => members.filter(m => m.hideFromAccounting !== true), [members]);
   const memberNames = useMemo(() => filteredMembers.map(m => m.name || m), [filteredMembers]);
 
-  // === 資料讀取 Hooks ===
   useEffect(() => {
     if (!db) return;
     const qActive = query(collection(db, "active_items"), orderBy("createdAt", "desc"));
     const unsubActive = onSnapshot(qActive, (snap) => setActiveItems(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
-    
     const qDict = query(collection(db, "item_dictionary"), orderBy("name", "asc"));
     const unsubDict = onSnapshot(qDict, (snap) => setItemDict(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
-
-    // 🟢 載入時間軸資料
     const q3 = query(collection(db, "timeline_types"), orderBy("interval"));
     const unsub3 = onSnapshot(q3, snap => setTimelineTypes(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const q4 = query(collection(db, "timeline_records"), orderBy("deathTimestamp", "desc"));
     const unsub4 = onSnapshot(q4, snap => setTimelineRecords(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-
     return () => { unsubActive(); unsubDict(); unsub3(); unsub4(); };
   }, []);
 
-  // 🟢 時間校正與計時器
   useEffect(() => {
     const syncTime = async () => {
         try {
             const response = await fetch(window.location.href, { method: 'HEAD', cache: 'no-store' });
             const serverDateStr = response.headers.get('Date');
             if (serverDateStr) {
-                const serverTime = new Date(serverDateStr).getTime();
-                const offset = serverTime - Date.now();
+                const offset = new Date(serverDateStr).getTime() - Date.now();
                 setTimeOffset(offset);
                 setIsTimeSynced(true);
             }
@@ -143,7 +132,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return () => clearInterval(timer);
   }, [timeOffset]);
 
-  // 🟢 時間軸計算邏輯
   const calculate2DayMarkers = () => { const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0); const totalDuration = 48 * 60 * 60 * 1000; const endOfTomorrow = new Date(startOfToday.getTime() + totalDuration); let rawMarkers = []; timelineRecords.forEach(record => { const type = timelineTypes.find(t => t.id === record.typeId); if (!type) return; const intervalMs = type.interval * 60 * 1000; let checkTime = record.deathTimestamp; if (checkTime < startOfToday.getTime()) { const diff = startOfToday.getTime() - checkTime; const jumps = Math.floor(diff / intervalMs); checkTime += jumps * intervalMs; } while (checkTime <= endOfTomorrow.getTime() + intervalMs) { if (checkTime >= startOfToday.getTime() && checkTime <= endOfTomorrow.getTime()) { const current = new Date(checkTime); const offsetMs = checkTime - startOfToday.getTime(); const percent = (offsetMs / totalDuration) * 100; rawMarkers.push({ id: record.id + '_' + checkTime, percent, time: formatTimeOnly(current), color: type.color, name: type.name, originalRecordId: record.id, interval: type.interval }); } checkTime += intervalMs; } }); rawMarkers.sort((a, b) => a.percent - b.percent); const levels = [ -10, -10, -10, -10 ]; return rawMarkers.map(marker => { let assignedLevel = 0; for (let i = 0; i < levels.length; i++) { if (marker.percent > levels[i] + 1.5) { assignedLevel = i; levels[i] = marker.percent; break; } if (i === levels.length - 1) { assignedLevel = 0; levels[0] = marker.percent; } } return { ...marker, level: assignedLevel }; }); };
   const markers = calculate2DayMarkers();
   
@@ -158,7 +146,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const handleDeleteTimelineType = async (id) => { if (currentUser === '訪客') return; if(window.confirm("確定刪除此設定？")) await deleteDoc(doc(db, "timeline_types", id)); };
   const handleAddTimelineRecord = async () => { if (currentUser === '訪客') return alert("訪客權限僅供瀏覽"); if (!timelineRecordForm.typeId || !timelineRecordForm.deathDate || !timelineRecordForm.deathTime) return alert("資料不完整"); setIsSubmitting(true); try { const ts = new Date(`${timelineRecordForm.deathDate}T${timelineRecordForm.deathTime}`).getTime(); await addDoc(collection(db, "timeline_records"), { typeId: timelineRecordForm.typeId, deathTimestamp: ts, creator: currentUser, createdAt: Date.now() }); setIsTimelineSettingsOpen(false); } catch(e) { alert(e.message); } finally { setIsSubmitting(false); } };
   const handleDeleteTimelineRecord = async (id) => { if (currentUser === '訪客') return; if(window.confirm("刪除此紀錄？")) await deleteDoc(doc(db, "timeline_records", id)); };
-
 
   const uniqueSources = useMemo(() => [...new Set(itemDict.map(i => i.source).filter(Boolean))], [itemDict]);
   const uniqueCategories = useMemo(() => [...new Set(itemDict.map(i => i.category).filter(Boolean))], [itemDict]);
@@ -182,15 +169,14 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         createdAt: item.createdAt || new Date().toISOString(), seller: item.seller || 'Unknown', itemName: item.itemName || 'Unknown',
         price: item.price || 0, profit: profit, participants: participantsStr
     };
-    try { await fetch(GOOGLE_SHEET_API_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+    try { await fetch('/api/sync-sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     } catch (e) { console.error("Sheet Sync Error:", e); }
   };
 
   const handleQueryRevenue = async () => {
-      if (!GOOGLE_SHEET_CSV_URL) return alert("CSV 網址未設定");
       setQueryLoading(true); setQueryResult(null);
       try {
-          const response = await fetch(GOOGLE_SHEET_CSV_URL);
+          const response = await fetch('/api/read-sheet');
           const text = await response.text();
           const rows = text.split('\n').map(line => line.trim()).filter(line => line);
           if (rows.length < 2) throw new Error("無資料");
@@ -224,11 +210,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           }
           details.sort((a, b) => b.price - a.price);
           setQueryResult({ totalSales, count, topItems: details.slice(0, 5) });
-      } catch (e) { console.error(e); alert("查詢失敗，請檢查 CSV 連結或網路狀態");
+      } catch (e) { console.error(e); alert("查詢失敗，請檢查網路狀態或重試");
       } finally { setQueryLoading(false); }
   };
 
-  const handleAddDictItem = async () => {
+  // 🟢 修改：將「新增」改為「儲存 (支援新增與編輯)」
+  const handleSaveDictItem = async () => {
     if (currentUser === '訪客') return alert("訪客權限不足");
     const finalSource = dictForm.source === 'NEW' ? dictForm.newSource.trim() : dictForm.source;
     const finalCategory = dictForm.category === 'NEW' ? dictForm.newCategory.trim() : dictForm.category;
@@ -236,25 +223,73 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
     if (!finalName || !finalSource || !finalCategory) return alert("名稱、來源、類別皆為必填！");
     
-    if (itemDict.some(i => i.name === finalName)) {
+    // 檢查是否重複 (排除自己)
+    const isDuplicate = itemDict.some(i => i.name === finalName && i.id !== editingDictId);
+    if (isDuplicate) {
         return alert(`物品 [${finalName}] 已經存在於名冊中了！`);
     }
 
     try {
-        await addDoc(collection(db, "item_dictionary"), {
-            name: finalName,
-            source: finalSource,
-            category: finalCategory,
-            createdBy: currentUser,
-            createdAt: new Date().toISOString()
-        });
-        alert(`成功新增物品: ${finalName}`);
+        if (editingDictId) {
+            // 更新現有物品
+            await updateDoc(doc(db, "item_dictionary", editingDictId), {
+                name: finalName,
+                source: finalSource,
+                category: finalCategory
+            });
+            alert(`成功更新物品: ${finalName}`);
+        } else {
+            // 新增物品
+            await addDoc(collection(db, "item_dictionary"), {
+                name: finalName,
+                source: finalSource,
+                category: finalCategory,
+                createdBy: currentUser,
+                createdAt: new Date().toISOString()
+            });
+            alert(`成功新增物品: ${finalName}`);
+        }
+        
+        // 關閉並重置表單
         setIsDictModalOpen(false);
+        setEditingDictId(null);
         setDictForm({ name: '', source: '', category: '', newSource: '', newCategory: '' });
     } catch (e) {
-        console.error("新增字典失敗", e);
-        alert("新增失敗");
+        console.error("儲存字典失敗", e);
+        alert("儲存失敗");
     }
+  };
+
+  // 🟢 新增：點擊編輯按鈕的處理
+  const handleEditDictItem = (e, item) => {
+      e.stopPropagation(); // 阻止觸發選擇物品的點擊事件
+      if (currentUser === '訪客') return alert("訪客權限不足");
+      
+      setEditingDictId(item.id);
+      setDictForm({
+          name: item.name,
+          source: item.source,
+          category: item.category,
+          newSource: '',
+          newCategory: ''
+      });
+      setIsItemSelectOpen(false); // 暫時關閉選擇列表
+      setIsDictModalOpen(true);   // 打開編輯/新增視窗
+  };
+
+  // 🟢 新增：點擊刪除按鈕的處理
+  const handleDeleteDictItem = async (e, id, name) => {
+      e.stopPropagation(); // 阻止觸發選擇物品的點擊事件
+      if (currentUser === '訪客') return alert("訪客權限不足");
+      
+      if (!window.confirm(`⚠️ 確定要從名冊中刪除 [${name}] 嗎？\n(注意：這不會影響已經記帳的歷史項目)`)) return;
+      
+      try {
+          await deleteDoc(doc(db, "item_dictionary", id));
+      } catch (e) {
+          console.error("刪除失敗", e);
+          alert("刪除失敗");
+      }
   };
 
   const handleAddItem = async () => {
@@ -346,7 +381,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       {/* 🟢 上方：Boss 時間軸區塊 */}
       {/* ========================================== */}
       <div className="w-full flex flex-col gap-2">
-         {/* Timeline Bar */}
          <div className="relative">
              <div className="flex relative mb-1 text-xs opacity-70 font-bold px-1 w-full">
                  <span className="w-1/2 text-center border-r border-white/20">Today</span>
@@ -377,7 +411,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
              </div>
          </div>
 
-         {/* Control Bar */}
          <div className={`mt-2 p-3 rounded-xl shadow-lg flex flex-wrap items-center justify-between gap-4 backdrop-blur-sm border ${theme.card}`}>
             <div className="flex items-center gap-4">
               <Clock size={32} className="opacity-80"/>
@@ -399,20 +432,20 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       {/* 🟢 下方：左欄 (掛賣建議) + 右欄 (團隊記帳) */}
       {/* ========================================== */}
       <div className="flex flex-col lg:flex-row gap-6 w-full">
-          
-          {/* 左側欄位：建議掛賣順序 (設定為 sticky 可以讓它黏在畫面上) */}
             <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-y-auto max-h-[calc(100vh-100px)] sticky top-6 custom-scrollbar ${theme.card}`}>
                 <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
             </div>
 
-          {/* 右側欄位：主要記帳區塊 */}
           <div className="w-full lg:w-3/4 flex flex-col">
-              {/* Header Buttons */}
               <div className="flex flex-wrap gap-3 mb-6">
                 <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                     <Plus size={20}/> 記帳
                 </button>
-                <button onClick={() => setIsDictModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
+                <button onClick={() => { 
+                    setEditingDictId(null); 
+                    setDictForm({ name: '', source: '', category: '', newSource: '', newCategory: '' }); 
+                    setIsDictModalOpen(true); 
+                }} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
                     <PackagePlus size={20}/> 新增物品
                 </button>
                 <button onClick={() => setIsBalanceGridOpen(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl shadow-lg transition-all active:scale-95 font-bold">
@@ -428,7 +461,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 </button>
               </div>
 
-              {/* Active Items Section */}
               <div className="mb-8">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pl-2 border-l-4 border-blue-500 gap-4">
                     <h2 className="text-2xl font-bold">進行中項目</h2>
@@ -456,13 +488,16 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       {/* Modals 區塊 */}
       {/* ========================================== */}
 
-      {/* 物品名冊建檔 Modal */}
+      {/* 物品名冊建檔 Modal (新增與編輯共用) */}
       {isDictModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
             <div className="flex justify-between items-center mb-6">
-                <h3 className={`text-xl font-bold ${theme.text} flex items-center gap-2`}><PackagePlus size={24}/> 建立新物品</h3>
-                <button onClick={() => setIsDictModalOpen(false)} className={theme.text}><X/></button>
+                <h3 className={`text-xl font-bold ${theme.text} flex items-center gap-2`}>
+                    {editingDictId ? <Edit size={24}/> : <PackagePlus size={24}/>} 
+                    {editingDictId ? '編輯物品' : '建立新物品'}
+                </h3>
+                <button onClick={() => { setIsDictModalOpen(false); setEditingDictId(null); }} className={theme.text}><X/></button>
             </div>
             <div className="space-y-4 mb-6">
                 <div>
@@ -493,8 +528,10 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                 </div>
             </div>
             <div className="flex gap-3">
-                <button onClick={() => setIsDictModalOpen(false)} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button>
-                <button onClick={handleAddDictItem} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-bold">確認建立</button>
+                <button onClick={() => { setIsDictModalOpen(false); setEditingDictId(null); }} className="flex-1 py-3 bg-gray-600 rounded-lg text-white font-bold">取消</button>
+                <button onClick={handleSaveDictItem} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-bold">
+                    {editingDictId ? '儲存修改' : '確認建立'}
+                </button>
             </div>
           </div>
         </div>
@@ -593,7 +630,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                         <div className="text-center py-20 opacity-50 flex flex-col items-center">
                             <PackagePlus size={48} className="mb-4 opacity-30" />
                             <p>找不到符合條件的物品</p>
-                            <button onClick={() => { setIsItemSelectOpen(false); setIsDictModalOpen(true); }} className="mt-4 text-blue-400 hover:underline">去「新增物品」建立一個吧！</button>
+                            <button onClick={() => { 
+                                setIsItemSelectOpen(false); 
+                                setEditingDictId(null);
+                                setDictForm({ name: '', source: '', category: '', newSource: '', newCategory: '' }); 
+                                setIsDictModalOpen(true); 
+                            }} className="mt-4 text-blue-400 hover:underline">去「新增物品」建立一個吧！</button>
                         </div>
                     ) : (
                         filteredDictItems.map(item => (
@@ -609,7 +651,25 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                                         <span className="text-xs bg-teal-900/40 text-teal-300 px-2 py-0.5 rounded border border-teal-500/30">{item.category}</span>
                                     </div>
                                 </div>
-                                <ChevronRight className="opacity-30" />
+                                
+                                {/* 🟢 編輯與刪除按鈕區塊 */}
+                                <div className="flex items-center gap-2">
+                                    <button 
+                                        onClick={(e) => handleEditDictItem(e, item)} 
+                                        className="p-2 text-gray-400 hover:text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors"
+                                        title="編輯物品"
+                                    >
+                                        <Edit size={18} />
+                                    </button>
+                                    <button 
+                                        onClick={(e) => handleDeleteDictItem(e, item.id, item.name)} 
+                                        className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                                        title="刪除物品"
+                                    >
+                                        <Trash2 size={18} />
+                                    </button>
+                                    <ChevronRight className="opacity-30 ml-2 hidden sm:block" />
+                                </div>
                             </div>
                         ))
                     )}
