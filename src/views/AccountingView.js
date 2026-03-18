@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Plus, Grid, Calculator, X, User, Users, Loader2, AlertTriangle, Search, 
   PackagePlus, List, AlertCircle, ChevronRight, 
-  Clock, Globe, Settings, Trash2, Edit // 🟢 引入了 Edit 編輯圖示
+  Clock, Globe, Settings, Trash2, Edit
 } from 'lucide-react';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, runTransaction } from "firebase/firestore";
 import { db } from '../config/firebase';
@@ -62,7 +62,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   const [isDictModalOpen, setIsDictModalOpen] = useState(false);
   const [isItemSelectOpen, setIsItemSelectOpen] = useState(false);
   
-  // 🟢 新增：用來追蹤目前正在編輯哪一個物品的 ID
   const [editingDictId, setEditingDictId] = useState(null);
   const [dictForm, setDictForm] = useState({ name: '', source: '', category: '', newSource: '', newCategory: '' });
   
@@ -162,6 +161,7 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     return activeItems;
   }, [activeItems, filterMode, currentUser]);
 
+  // 🟢 還原：直接使用 GOOGLE_SHEET_API_URL，並帶上 mode: 'no-cors' 與 text/plain
   const saveToGoogleSheet = async (item, profitOverride = null) => {
     const profit = profitOverride !== null ? profitOverride : (item.finalSplit || 0);
     let participantsStr = Array.isArray(item.participants) ? item.participants.map(p => typeof p === 'string' ? p : p.name).join(', ') : "";
@@ -169,14 +169,22 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         createdAt: item.createdAt || new Date().toISOString(), seller: item.seller || 'Unknown', itemName: item.itemName || 'Unknown',
         price: item.price || 0, profit: profit, participants: participantsStr
     };
-    try { await fetch('/api/sync-sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    try { 
+        await fetch(GOOGLE_SHEET_API_URL, { 
+            method: 'POST', 
+            mode: 'no-cors', 
+            headers: { 'Content-Type': 'text/plain' }, 
+            body: JSON.stringify(payload) 
+        });
     } catch (e) { console.error("Sheet Sync Error:", e); }
   };
 
+  // 🟢 還原：直接使用 GOOGLE_SHEET_CSV_URL
   const handleQueryRevenue = async () => {
+      if (!GOOGLE_SHEET_CSV_URL) return alert("CSV 網址未設定");
       setQueryLoading(true); setQueryResult(null);
       try {
-          const response = await fetch('/api/read-sheet');
+          const response = await fetch(GOOGLE_SHEET_CSV_URL);
           const text = await response.text();
           const rows = text.split('\n').map(line => line.trim()).filter(line => line);
           if (rows.length < 2) throw new Error("無資料");
@@ -214,7 +222,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
       } finally { setQueryLoading(false); }
   };
 
-  // 🟢 修改：將「新增」改為「儲存 (支援新增與編輯)」
   const handleSaveDictItem = async () => {
     if (currentUser === '訪客') return alert("訪客權限不足");
     const finalSource = dictForm.source === 'NEW' ? dictForm.newSource.trim() : dictForm.source;
@@ -223,7 +230,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
     if (!finalName || !finalSource || !finalCategory) return alert("名稱、來源、類別皆為必填！");
     
-    // 檢查是否重複 (排除自己)
     const isDuplicate = itemDict.some(i => i.name === finalName && i.id !== editingDictId);
     if (isDuplicate) {
         return alert(`物品 [${finalName}] 已經存在於名冊中了！`);
@@ -231,7 +237,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
 
     try {
         if (editingDictId) {
-            // 更新現有物品
             await updateDoc(doc(db, "item_dictionary", editingDictId), {
                 name: finalName,
                 source: finalSource,
@@ -239,7 +244,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             });
             alert(`成功更新物品: ${finalName}`);
         } else {
-            // 新增物品
             await addDoc(collection(db, "item_dictionary"), {
                 name: finalName,
                 source: finalSource,
@@ -250,7 +254,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
             alert(`成功新增物品: ${finalName}`);
         }
         
-        // 關閉並重置表單
         setIsDictModalOpen(false);
         setEditingDictId(null);
         setDictForm({ name: '', source: '', category: '', newSource: '', newCategory: '' });
@@ -260,9 +263,8 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
     }
   };
 
-  // 🟢 新增：點擊編輯按鈕的處理
   const handleEditDictItem = (e, item) => {
-      e.stopPropagation(); // 阻止觸發選擇物品的點擊事件
+      e.stopPropagation(); 
       if (currentUser === '訪客') return alert("訪客權限不足");
       
       setEditingDictId(item.id);
@@ -273,13 +275,12 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           newSource: '',
           newCategory: ''
       });
-      setIsItemSelectOpen(false); // 暫時關閉選擇列表
-      setIsDictModalOpen(true);   // 打開編輯/新增視窗
+      setIsItemSelectOpen(false); 
+      setIsDictModalOpen(true);   
   };
 
-  // 🟢 新增：點擊刪除按鈕的處理
   const handleDeleteDictItem = async (e, id, name) => {
-      e.stopPropagation(); // 阻止觸發選擇物品的點擊事件
+      e.stopPropagation(); 
       if (currentUser === '訪客') return alert("訪客權限不足");
       
       if (!window.confirm(`⚠️ 確定要從名冊中刪除 [${name}] 嗎？\n(注意：這不會影響已經記帳的歷史項目)`)) return;
@@ -377,9 +378,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
   return (
     <div className={`p-4 md:p-6 pb-20 max-w-7xl mx-auto min-h-screen relative flex flex-col gap-6 ${mainBgClass}`}>
       
-      {/* ========================================== */}
-      {/* 🟢 上方：Boss 時間軸區塊 */}
-      {/* ========================================== */}
       <div className="w-full flex flex-col gap-2">
          <div className="relative">
              <div className="flex relative mb-1 text-xs opacity-70 font-bold px-1 w-full">
@@ -428,9 +426,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
          </div>
       </div>
 
-      {/* ========================================== */}
-      {/* 🟢 下方：左欄 (掛賣建議) + 右欄 (團隊記帳) */}
-      {/* ========================================== */}
       <div className="flex flex-col lg:flex-row gap-6 w-full">
             <div className={`w-full lg:w-1/4 rounded-2xl flex flex-col shadow-lg overflow-y-auto max-h-[calc(100vh-100px)] sticky top-6 custom-scrollbar ${theme.card}`}>
                 <SellerSuggestionStrip isDarkMode={isDarkMode} vertical={true} members={filteredMembers} />
@@ -484,11 +479,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
           </div>
       </div>
 
-      {/* ========================================== */}
-      {/* Modals 區塊 */}
-      {/* ========================================== */}
-
-      {/* 物品名冊建檔 Modal (新增與編輯共用) */}
       {isDictModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
@@ -537,7 +527,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 新增記帳 Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-lg rounded-2xl p-6 shadow-2xl ${theme.card}`}>
@@ -593,7 +582,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 物品選擇器面板 */}
       {isItemSelectOpen && (
         <div className="fixed inset-0 bg-black/80 flex flex-col p-4 z-[60] backdrop-blur-md animate-in slide-in-from-bottom-4">
             <div className={`w-full max-w-2xl mx-auto rounded-2xl shadow-2xl flex flex-col h-full max-h-[90vh] ${theme.card}`}>
@@ -652,7 +640,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
                                     </div>
                                 </div>
                                 
-                                {/* 🟢 編輯與刪除按鈕區塊 */}
                                 <div className="flex items-center gap-2">
                                     <button 
                                         onClick={(e) => handleEditDictItem(e, item)} 
@@ -678,7 +665,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 收益查詢 Modal */}
       {isQueryOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className={`w-full max-w-md rounded-2xl p-6 shadow-2xl ${theme.card}`}>
@@ -735,7 +721,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 時間線設定 Modal */}
       {isTimelineSettingsOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[999]">
           <div className={`w-full max-w-2xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[85vh] ${theme.card}`}> 
@@ -787,7 +772,6 @@ const AccountingView = ({ isDarkMode, currentUser, members = [] }) => {
         </div>
       )}
 
-      {/* 全螢幕防呆遮罩 */}
       {isProcessing && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-gray-900 border border-gray-700 p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center flex flex-col items-center animate-in fade-in zoom-in duration-200">
